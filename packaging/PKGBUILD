@@ -1,0 +1,17 @@
+# Local package: copy the existing release binary. No toolchain download or rebuild.
+# Run npm ci && npm run tauri build -- --no-bundle in the project first.
+pkgname=miku-focus
+pkgver=0.1.3
+pkgrel=1
+pkgdesc='A local Pomodoro and visual-novel desktop companion'
+arch=('x86_64')
+depends=('webkit2gtk-4.1' 'gtk3' 'libappindicator' 'librsvg' 'xdotool' 'gst-plugins-base' 'gst-plugins-good')
+makedepends=()
+options=('!strip' '!debug')
+
+package() {
+  local root="${startdir}/.."
+  install -Dm755 "${root}/src-tauri/target/release/miku-focus" "${pkgdir}/usr/bin/miku-focus"
+  install -Dm644 "${root}/src-tauri/icons/icon.png" "${pkgdir}/usr/share/icons/hicolor/256x256/apps/dev.mikufocus.desktop.png"
+  install -Dm644 "${root}/packaging/dev.mikufocus.desktop.desktop" "${pkgdir}/usr/share/applications/dev.mikufocus.desktop.desktop"
+}

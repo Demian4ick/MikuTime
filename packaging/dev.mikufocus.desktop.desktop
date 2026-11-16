@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Miku Focus
+Comment=Таймер работы и заботливый помощник
+Exec=miku-focus
+Icon=dev.mikufocus.desktop
+Categories=Utility;Office;
+Terminal=false
+StartupNotify=true
+StartupWMClass=miku-focus

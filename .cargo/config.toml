@@ -1,0 +1,6 @@
+[build]
+jobs = 1
+
+[env]
+# Do not fill RAM-backed /tmp during compilation. Relative to workspace root.
+TMPDIR = { value = ".build-tmp", relative = true }

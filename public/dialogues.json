@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "dialogues": [
+    { "id": "welcome", "event": "launch", "priority": 2, "cooldownMs": 60000, "lines": [{ "en": "Welcome back, Senpai. Shall we make a little time for your dreams?", "ru": "С возвращением, сэмпай. Давай уделим немного времени твоим мечтам? ♡", "emotion": "Happy", "voice": "welcome" }] },
+    { "id": "start", "event": "start", "priority": 3, "cooldownMs": 10000, "lines": [{ "en": "One small step at a time, Senpai. I'm right here with you!", "ru": "По одному маленькому шагу, сэмпай. Я здесь, рядом с тобой~", "emotion": "Calm", "voice": "start" }] },
+    { "id": "pause", "event": "pause", "priority": 3, "cooldownMs": 30000, "lines": [{ "en": "Take your time, Senpai. I'll keep your place warm.", "ru": "Не торопись, сэмпай. Я подожду тебя здесь ♡", "emotion": "Calm", "voice": "pause" }] },
+    { "id": "resume", "event": "resume", "priority": 3, "cooldownMs": 30000, "lines": [{ "en": "Ready when you are, Senpai!", "ru": "Продолжим, сэмпай? Я готова!", "emotion": "Happy", "voice": "resume" }] },
+    { "id": "focus-complete", "event": "focus_complete", "priority": 10, "cooldownMs": 0, "lines": [{ "en": "You did it, Senpai! Five more minutes, or a well-earned break?", "ru": "Ты справился, сэмпай! Ещё пять минут или заслуженный отдых? ♡", "emotion": "Happy", "voice": "focus_complete" }] },
+    { "id": "first-extension", "event": "first_extension", "priority": 11, "cooldownMs": 0, "lines": [
+      { "en": "Huh? Five more minutes, Senpai?", "ru": "А? Ещё пять минут, сэмпай?", "emotion": "Surprised", "voice": "extra_surprised", "durationMs": 2200 },
+      { "en": "Hehe! You're so hardworking. I'm proud of you!", "ru": "Хе-хе! Ты такой старательный. Я горжусь тобой~ ♡", "emotion": "Pleased", "voice": "extra_pleased", "durationMs": 4200 }
+    ] },
+    { "id": "extension", "event": "extension", "priority": 10, "cooldownMs": 0, "lines": [{ "en": "Another little encore? I'm cheering for you, Senpai!", "ru": "Ещё немного на бис? Я болею за тебя, сэмпай! ♡", "emotion": "Pleased", "voice": "extension" }] },
+    { "id": "finish", "event": "break_start", "priority": 12, "cooldownMs": 0, "lines": [{ "en": "Beautiful work, Senpai. Let's rest our eyes a little.", "ru": "Работа закончена, сэмпай. Теперь отдыхай: расслабь плечи, выпей воды. Я рядом~ ♡", "emotion": "Relief", "voice": "finish" }] },
+    { "id": "break-complete", "event": "break_complete", "priority": 8, "cooldownMs": 0, "lines": [{ "en": "Feeling refreshed, Senpai? Your next little adventure is waiting.", "ru": "Отдохнул, сэмпай? Следующее маленькое приключение уже ждёт!", "emotion": "Happy", "voice": "break_complete" }] },
+    { "id": "break-skipped", "event": "break_skipped", "priority": 10, "cooldownMs": 0, "lines": [{ "en": "Ready a little early, Senpai? Take things gently. I'm here for you.", "ru": "Уже отдохнул, сэмпай? Хорошо, только не торопись. Я поддержу тебя ♡", "emotion": "Calm", "voice": "break_skipped" }] },
+    { "id": "break-touch", "event": "break_touch", "priority": 2, "cooldownMs": 15000, "lines": [{ "en": "No rushing back to work, Senpai. Enjoy your little break with me.", "ru": "Сейчас можно просто отдохнуть вместе, сэмпай. Никакой спешки~ ♡", "emotion": "Calm", "voice": "break_touch" }] },
+    { "id": "reset", "event": "reset", "priority": 4, "cooldownMs": 30000, "lines": [{ "en": "A fresh page, Senpai. Your effort still counts.", "ru": "Начнём с чистого листа, сэмпай. Твои старания не пропали.", "emotion": "Calm", "voice": "reset" }] },
+    { "id": "idle", "event": "idle", "priority": 1, "cooldownMs": 1800000, "lines": [{ "en": "A quiet moment, Senpai? No rush. Thinking is part of the journey too.", "ru": "Тихая минутка, сэмпай? Не торопись. Размышлять — тоже часть пути.", "emotion": "Calm", "voice": "idle" }] },
+    { "id": "return", "event": "return", "priority": 1, "cooldownMs": 1200000, "lines": [{ "en": "There you are, Senpai. I saved a smile for you.", "ru": "А вот и ты, сэмпай. Я сберегла для тебя улыбку ♡", "emotion": "Happy", "voice": "return" }] },
+    { "id": "long-work", "event": "long_work", "priority": 2, "cooldownMs": 1800000, "lines": [{ "en": "You're doing so much, Senpai. A sip of water, perhaps? Only if you want to.", "ru": "Ты так много работаешь, сэмпай. Может, глоток воды? Только если захочешь~", "emotion": "Worried", "voice": "long_work" }] },
+    { "id": "company", "event": "company", "priority": 1, "cooldownMs": 1500000, "lines": [{ "en": "Even an ordinary day can become a lovely memory with you, Senpai.", "ru": "Даже обычный день рядом с тобой может стать тёплым воспоминанием, сэмпай ♡", "emotion": "Pleased", "voice": "company" }] },
+    { "id": "record", "event": "record", "priority": 7, "cooldownMs": 60000, "lines": [{ "en": "A new personal best! Hehe, my Senpai is amazing!", "ru": "Новый личный рекорд! Хе-хе, мой сэмпай просто невероятный! ♡", "emotion": "Surprised", "voice": "record" }] },
+    { "id": "goal", "event": "goal", "priority": 8, "cooldownMs": 86400000, "lines": [{ "en": "Today's goal, all yours! I'm so proud of you, Senpai.", "ru": "Цель на сегодня достигнута! Я так горжусь тобой, сэмпай~ ♡", "emotion": "Pleased", "voice": "goal" }] },
+    { "id": "touch", "event": "touch", "priority": 2, "cooldownMs": 15000, "lines": [{ "en": "Hmm? Looking at me instead of your work, Senpai? Just kidding!", "ru": "М-м? Смотришь на меня, а не на работу, сэмпай? Шучу! ♡", "emotion": "Pleased", "voice": "touch" }] }
+  ]
+}
