@@ -2,7 +2,7 @@ import type { Dialogue, DialogueFile, DialogueLine, Emotion, Settings } from './
 import { VoiceManager } from './voice.ts';
 import { advanceCharacters } from './typing.ts';
 
-export interface VisualState { emotion: Emotion; ru: string; en: string; speaking: boolean }
+export interface VisualState { emotion: Emotion; ru: string; en: string; speaking: boolean; typing: boolean; awaitingInput: boolean }
 export function wait(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise(resolve => {
     if (signal.aborted) { resolve(); return; }
@@ -19,7 +19,10 @@ export class ReactionController {
   private abort: AbortController | null = null;
   private voice = new VoiceManager();
   private disposed = false;
+  private finishTyping: (() => void) | null = null;
+  private continueLine: (() => void) | null = null;
   private resting: boolean | undefined = undefined;
+  private awaitingDecision = false;
   private data: DialogueFile;
   private settings: () => Settings;
   private url: (path: string) => string;
@@ -29,6 +32,11 @@ export class ReactionController {
     this.voice.onError = onError;
   }
   replace(data: DialogueFile): void { this.data = data; }
+  setDecision(awaiting: boolean): void {
+    if (this.awaitingDecision === awaiting) return;
+    this.awaitingDecision = awaiting;
+    if (!this.current && !this.disposed) this.visual(this.fallback());
+  }
   setContext(resting: boolean): void {
     if (this.resting === resting) return;
     this.resting = resting;
@@ -42,9 +50,13 @@ export class ReactionController {
       : !['break_start', 'break_touch'].includes(event);
   }
   private fallback(): VisualState {
+    if (this.awaitingDecision && !this.resting) {
+      const line = this.data.dialogues.find(d => d.event === 'focus_complete')?.lines[0];
+      return { emotion: line?.emotion ?? 'Happy', ru: line?.ru ?? 'Ты справился, сэмпай! Ещё пять минут или заслуженный отдых? ♡', en: line?.en ?? '', speaking: false, typing: false, awaitingInput: false };
+    }
     return this.resting
-      ? { emotion: 'Calm', ru: 'Отдыхай, сэмпай. Торопиться некуда~ ♡', en: 'Rest easy, Senpai. There is no hurry.', speaking: false }
-      : { emotion: 'Neutral', ru: 'Я рядом, сэмпай. Всё получится~ ♡', en: "I'm here with you, Senpai.", speaking: false };
+      ? { emotion: 'Calm', ru: 'Отдыхай, сэмпай. Торопиться некуда~ ♡', en: 'Rest easy, Senpai. There is no hurry.', speaking: false, typing: false, awaitingInput: false }
+      : { emotion: 'Neutral', ru: 'Я рядом, сэмпай. Всё получится~ ♡', en: "I'm here with you, Senpai.", speaking: false, typing: false, awaitingInput: false };
   }
   event(event: string): void {
     if (this.disposed || !this.allowed(event)) return;
@@ -58,22 +70,55 @@ export class ReactionController {
     if (!this.current) void this.drain();
   }
   skip(): void { this.abort?.abort(); }
+  advance(): void {
+    if (this.finishTyping) this.finishTyping();
+    else this.continueLine?.();
+  }
   silence(): void { this.voice.stop(); }
   configure(): void { this.voice.configure(this.settings()); }
   private async line(line: DialogueLine, signal: AbortSignal): Promise<void> {
-    this.visual({ emotion: line.emotion, ru: '', en: line.en, speaking: true });
-    const voice = this.voice.play(line.voice, this.settings(), this.url, signal);
+    if (signal.aborted) return;
+    const voiceAbort = new AbortController();
+    const stopVoice = () => voiceAbort.abort();
+    signal.addEventListener('abort', stopVoice, { once: true });
+    void this.voice.play(line.voice, this.settings(), this.url, voiceAbort.signal);
     const characters = Array.from(line.ru);
     let cursor = 0, previous = performance.now();
-    // At most ~33 updates/sec while text is actively being typed, none otherwise.
-    while (cursor < characters.length && !signal.aborted) {
-      const now = performance.now();
-      cursor = advanceCharacters(cursor, now - previous, this.settings().textSpeed ?? 60, characters.length);
-      previous = now;
-      this.visual({ emotion: line.emotion, ru: characters.slice(0, Math.floor(cursor)).join(''), en: line.en, speaking: true });
-      if (cursor < characters.length) await wait(30, signal);
+    let reveal = false;
+    try {
+      if (characters.length) {
+        this.finishTyping = () => reveal = true;
+        this.visual({ emotion: line.emotion, ru: '', en: line.en, speaking: true, typing: true, awaitingInput: false });
+      }
+      // Updates only during typing; waiting for a click has no timeout or polling.
+      while (cursor < characters.length && !signal.aborted) {
+        const now = performance.now();
+        cursor = reveal ? characters.length : advanceCharacters(cursor, now - previous, this.settings().textSpeed ?? 60, characters.length);
+        previous = now;
+        this.visual({ emotion: line.emotion, ru: characters.slice(0, Math.floor(cursor)).join(''), en: line.en, speaking: true, typing: true, awaitingInput: false });
+        if (cursor < characters.length) await wait(30, signal);
+      }
+      this.finishTyping = null;
+      if (signal.aborted) return;
+      await new Promise<void>(resolve => {
+        let settled = false;
+        const resume = () => {
+          if (settled) return;
+          settled = true;
+          signal.removeEventListener('abort', resume);
+          if (this.continueLine === resume) this.continueLine = null;
+          resolve();
+        };
+        this.continueLine = resume;
+        signal.addEventListener('abort', resume, { once: true });
+        this.visual({ emotion: line.emotion, ru: line.ru, en: line.en, speaking: true, typing: false, awaitingInput: true });
+        if (signal.aborted) resume();
+      });
+    } finally {
+      this.finishTyping = null; this.continueLine = null;
+      signal.removeEventListener('abort', stopVoice);
+      stopVoice();
     }
-    await Promise.all([voice, wait(line.durationMs ?? 3200, signal)]);
   }
   private async drain(): Promise<void> {
     while (this.queue.length && !this.disposed) {

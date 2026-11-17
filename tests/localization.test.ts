@@ -35,4 +35,9 @@ test('visible UI has no old English labels or English subtitle rendering', () =>
   assert.doesNotMatch(readFileSync(new URL('../src/style.css', import.meta.url), 'utf8'), /୨୧/);
   const config = JSON.parse(readFileSync(new URL('../src-tauri/tauri.conf.json', import.meta.url), 'utf8'));
   assert.equal(config.app.windows[0].title, 'Miku Focus');
+  const panel = readFileSync(new URL('../src/components/DialoguePanel.svelte', import.meta.url), 'utf8');
+  assert.match(panel, /aria-label="Продолжить диалог"/);
+  assert.doesNotMatch(panel, /visual\.en/);
+  assert.match(app, /\/companion\/SmartyMiku\.png/);
+  assert.match(app, /aria-label="Изменить размер помощника"/);
 });

@@ -79,14 +79,18 @@ pub fn prepare(
     label: &str,
     top: bool,
     pos: Option<(i32, i32)>,
+    size: (u32, u32),
 ) -> Result<(), String> {
     let window = app.get_webview_window(label).ok_or("Окно недоступно")?;
     if !is_hyprland() {
         if label == "companion" {
+            window.set_resizable(true).map_err(|e| e.to_string())?;
             window
-                .set_size(tauri::LogicalSize::new(300.0, 360.0))
+                .set_size(tauri::LogicalSize::new(
+                    f64::from(size.0),
+                    f64::from(size.1),
+                ))
                 .map_err(|e| e.to_string())?;
-            window.set_resizable(false).map_err(|e| e.to_string())?;
             window.set_always_on_top(top).map_err(|e| e.to_string())?;
             if let Some((x, y)) = pos {
                 window
@@ -106,7 +110,7 @@ pub fn prepare(
     // This only changes our live window, never a rule or configuration file.
     dispatch("setfloating", &format!("address:{address}"))?;
     let (w, h) = if label == "companion" {
-        (300, 360)
+        (size.0 as i32, size.1 as i32)
     } else {
         (760, 570)
     };
@@ -202,6 +206,90 @@ pub fn position(app: &AppHandle) -> Option<(i32, i32)> {
         let p = app.get_webview_window("companion")?.outer_position().ok()?;
         Some((p.x, p.y))
     }
+}
+
+pub fn size(app: &AppHandle) -> Option<(u32, u32)> {
+    if is_hyprland() {
+        let c = own_client("Miku Focus — помощник").ok()?;
+        Some((c["size"][0].as_u64()? as u32, c["size"][1].as_u64()? as u32))
+    } else {
+        let window = app.get_webview_window("companion")?;
+        let size = window
+            .inner_size()
+            .ok()?
+            .to_logical::<u32>(window.scale_factor().ok()?);
+        Some((size.width, size.height))
+    }
+}
+
+pub fn resize_to(app: &AppHandle, size: (u32, u32)) -> Result<(), String> {
+    if is_hyprland() {
+        let c = own_client("Miku Focus — помощник")?;
+        let address = c["address"].as_str().ok_or("Нет адреса окна")?;
+        let position = (
+            c["at"][0].as_i64().ok_or("Нет координаты окна")? as i32,
+            c["at"][1].as_i64().ok_or("Нет координаты окна")? as i32,
+        );
+        resize_anchored(address, size, position)
+    } else {
+        app.get_webview_window("companion")
+            .ok_or("Окно недоступно")?
+            .set_size(tauri::LogicalSize::new(
+                f64::from(size.0),
+                f64::from(size.1),
+            ))
+            .map_err(|e| e.to_string())
+    }
+}
+
+pub struct ResizeOrigin {
+    address: String,
+    origin: (u32, u32),
+    cursor: (i32, i32),
+    position: (i32, i32),
+    pub last: (u32, u32),
+}
+
+pub fn begin_resize() -> Result<ResizeOrigin, String> {
+    let c = own_client("Miku Focus — помощник")?;
+    let origin = (
+        c["size"][0].as_u64().ok_or("Нет ширины окна")? as u32,
+        c["size"][1].as_u64().ok_or("Нет высоты окна")? as u32,
+    );
+    Ok(ResizeOrigin {
+        address: c["address"].as_str().ok_or("Нет адреса окна")?.into(),
+        origin,
+        cursor: cursor()?,
+        position: (
+            c["at"][0].as_i64().ok_or("Нет координаты окна")? as i32,
+            c["at"][1].as_i64().ok_or("Нет координаты окна")? as i32,
+        ),
+        last: origin,
+    })
+}
+
+pub fn move_resize(resize: &mut ResizeOrigin) -> Result<(), String> {
+    let p = cursor()?;
+    resize.last = crate::window_geometry::resized_size(
+        resize.origin,
+        (
+            p.0.saturating_sub(resize.cursor.0),
+            p.1.saturating_sub(resize.cursor.1),
+        ),
+    );
+    resize_anchored(&resize.address, resize.last, resize.position)
+}
+
+fn resize_anchored(address: &str, size: (u32, u32), position: (i32, i32)) -> Result<(), String> {
+    dispatch(
+        "resizewindowpixel",
+        &format!("exact {} {},address:{address}", size.0, size.1),
+    )?;
+    // Hyprland's dispatcher resizes around the center; the south-east grip must keep the top-left fixed.
+    dispatch(
+        "movewindowpixel",
+        &format!("exact {} {},address:{address}", position.0, position.1),
+    )
 }
 
 /// Event-driven raise on compositor focus changes, not a polling subprocess.

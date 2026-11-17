@@ -41,6 +41,7 @@ impl SettingsStore {
             return Err("Неподдерживаемая версия хранилища; файл не изменён".into());
         }
         data.settings.validate()?;
+        data.settings.migrate_sound_defaults();
         data.localize_builtin_categories();
         Ok(data)
     }

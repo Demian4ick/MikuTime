@@ -1,17 +1,17 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Miku Focus",
-  "version": "0.1.3",
+  "version": "0.1.6",
   "identifier": "dev.mikufocus.desktop",
   "build": { "beforeDevCommand": "npm run dev", "devUrl": "http://localhost:1420", "beforeBuildCommand": "npm run build", "frontendDist": "../dist" },
   "app": {
     "enableGTKAppId": false,
     "windows": [
       { "label": "main", "title": "Miku Focus", "width": 760, "height": 570, "minWidth": 700, "minHeight": 540, "center": true, "backgroundColor": "#e4fcf5" },
-      { "label": "companion", "title": "Miku Focus — помощник", "url": "index.html?companion", "width": 300, "height": 360, "decorations": false, "transparent": true, "backgroundColor": "#00000000", "shadow": false, "resizable": true, "visible": false, "skipTaskbar": true }
+      { "label": "companion", "title": "Miku Focus — помощник", "url": "index.html?companion", "width": 180, "height": 190, "minWidth": 80, "minHeight": 90, "maxWidth": 600, "maxHeight": 640, "decorations": false, "transparent": true, "backgroundColor": "#00000000", "shadow": false, "resizable": true, "visible": false, "skipTaskbar": true }
     ],
     "security": {
-      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost blob:; media-src 'self' asset: http://asset.localhost blob:; style-src 'self' 'unsafe-inline'; object-src 'none'; frame-src 'none'",
+      "csp": "default-src 'self'; connect-src 'self' ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost blob:; media-src 'self' asset: http://asset.localhost blob:; style-src 'self' 'unsafe-inline'; object-src 'none'; frame-src 'none'",
       "assetProtocol": { "enable": true, "scope": ["$APPDATA/assets/**"] }
     }
   },

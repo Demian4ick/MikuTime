@@ -1,7 +1,7 @@
 # Local package: copy the existing release binary. No toolchain download or rebuild.
 # Run npm ci && npm run tauri build -- --no-bundle in the project first.
 pkgname=miku-focus
-pkgver=0.1.3
+pkgver=0.1.6
 pkgrel=1
 pkgdesc='A local Pomodoro and visual-novel desktop companion'
 arch=('x86_64')

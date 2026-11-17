@@ -10,6 +10,22 @@ const data: DialogueFile = { version: 1, dialogues: [
   { id: 'low', event: 'low', priority: 1, cooldownMs: 1000, lines: [{ en: 'low', ru: '', emotion: 'Calm', durationMs: 100 }] },
   { id: 'high', event: 'high', priority: 10, cooldownMs: 0, lines: [{ en: 'high', ru: '', emotion: 'Happy', durationMs: 100 }] },
 ] };
+test('reopening a claimed decision restores Happy and the question instead of Neutral', async () => {
+  const file: DialogueFile = { version: 1, dialogues: [{ id: 'win', event: 'focus_complete', priority: 10, cooldownMs: 0,
+    lines: [{ en: '', ru: 'Победа! Ещё пять минут или отдых?', emotion: 'Happy' }] }] };
+  let state: import('../src/lib/reactions.ts').VisualState | undefined;
+  const create = () => new ReactionController(file, () => ({ ...settings, textSpeed: 0 }), p => p, value => state = value);
+  const companion = create(); companion.setContext(false); companion.setDecision(true); companion.event('focus_complete');
+  companion.dispose(); await delay(1);
+  const main = create(); main.setContext(false); main.setDecision(true); main.event('focus_complete');
+  try {
+    assert.equal(state!.emotion, 'Happy'); assert.match(state!.ru, /Победа/);
+    main.advance(); await delay(1);
+    assert.equal(state!.emotion, 'Happy'); assert.match(state!.ru, /Ещё пять минут или отдых/);
+    main.setDecision(false); assert.equal(state!.emotion, 'Neutral');
+    main.setContext(true); assert.equal(state!.emotion, 'Calm');
+  } finally { main.dispose(); }
+});
 test('higher-priority reaction interrupts and cooldown prevents repeats', async () => {
   const lines: string[] = [];
   const controller = new ReactionController(data, () => settings, p => p, v => { if (v.speaking) lines.push(v.en); });
@@ -46,6 +62,8 @@ test('rest context interrupts work, rejects resume, and returns to rest-specific
   controller.setContext(true); controller.event('resume'); controller.event('break_start');
   await delay(160);
   assert.deepEqual(states.filter(v => v.speaking).map(v => v.en), ['work-resume', 'rest-now']);
+  assert.equal(states.at(-1)!.speaking, true);
+  controller.advance(); await delay(10);
   assert.match(states.at(-1)!.ru, /Отдыхай/);
   controller.event('resume'); assert.equal(states.filter(v => v.speaking).length, 2);
   controller.setContext(false); assert.match(states.at(-1)!.ru, /Всё получится/);
@@ -83,4 +101,56 @@ test('instant text reveals complete Unicode characters and live speed changes fi
   assert.ok(lines.includes('Мику 🎵 рядом'));
   for (const line of lines) assert.ok(!/[\uD800-\uDBFF]$/.test(line));
   controller.dispose();
+});
+test('dialogue ignores legacy auto durations and waits for a click on every line', async () => {
+  const states: { ru: string; awaitingInput: boolean; speaking: boolean }[] = [];
+  const file: DialogueFile = { version: 1, dialogues: [{ id: 'manual', event: 'launch', priority: 1, cooldownMs: 0, lines: [
+    { en: '', ru: 'Первая', emotion: 'Surprised', durationMs: 1 },
+    { en: '', ru: 'Вторая', emotion: 'Pleased', durationMs: 1 },
+  ] }] };
+  const controller = new ReactionController(file, () => ({ ...settings, textSpeed: 0 }), p => p, value => states.push(value));
+  try {
+    controller.event('launch'); await delay(40);
+    assert.equal(states.at(-1)!.ru, 'Первая'); assert.equal(states.at(-1)!.awaitingInput, true);
+    controller.advance(); await delay(10);
+    assert.equal(states.at(-1)!.ru, 'Вторая');
+    await delay(40); assert.equal(states.at(-1)!.ru, 'Вторая');
+    controller.advance(); await delay(10);
+    assert.equal(states.at(-1)!.speaking, false);
+  } finally { controller.dispose(); }
+});
+test('first click reveals typing, second click continues; dispose cancels the wait', async () => {
+  const states: { ru: string; awaitingInput: boolean; speaking: boolean }[] = [];
+  const controller = new ReactionController({ version: 1, dialogues: [{ id: 'reveal', event: 'launch', priority: 1, cooldownMs: 0,
+    lines: [{ en: '', ru: 'Медленная реплика 🎵', emotion: 'Calm' }] }] }, () => ({ ...settings, textSpeed: 1 }), p => p, value => states.push(value));
+  controller.event('launch'); controller.advance(); await delay(45);
+  assert.equal(states.at(-1)!.ru, 'Медленная реплика 🎵');
+  assert.equal(states.at(-1)!.awaitingInput, true);
+  const count = states.length;
+  controller.dispose(); controller.advance(); await delay(10);
+  assert.equal(states.length, count);
+});
+test('manual continuation stops and releases an unfinished voice', async () => {
+  class FakeAudio {
+    static instance: FakeAudio;
+    src = ''; volume = 1; preload = ''; onended = null; onerror = null; paused = false; released = false;
+    constructor() { FakeAudio.instance = this; }
+    play() { return Promise.resolve(); }
+    pause() { this.paused = true; }
+    removeAttribute() { this.src = ''; }
+    load() { this.released = true; }
+  }
+  const original = globalThis.Audio;
+  Object.defineProperty(globalThis, 'Audio', { value: FakeAudio, configurable: true, writable: true });
+  const controller = new ReactionController({ version: 1, dialogues: [{ id: 'voiced', event: 'launch', priority: 1, cooldownMs: 0,
+    lines: [{ en: '', ru: 'Голос', emotion: 'Happy', voice: 'test' }] }] }, () => ({ ...settings, quietMode: false, textSpeed: 0, voices: { test: '/local/test.wav' } }), p => p, () => {});
+  try {
+    controller.event('launch'); assert.equal(FakeAudio.instance.paused, false);
+    controller.advance(); await delay(10);
+    assert.equal(FakeAudio.instance.paused, true); assert.equal(FakeAudio.instance.released, true);
+  } finally {
+    controller.dispose();
+    if (original === undefined) delete (globalThis as { Audio?: unknown }).Audio;
+    else Object.defineProperty(globalThis, 'Audio', { value: original, configurable: true, writable: true });
+  }
 });

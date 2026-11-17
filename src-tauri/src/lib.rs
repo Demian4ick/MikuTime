@@ -1,8 +1,10 @@
+mod audio;
 mod dialogues;
 mod idle;
 mod platform;
 mod store;
 mod timer;
+mod window_geometry;
 
 use serde::Serialize;
 use serde_json::{json, Value};
@@ -30,6 +32,8 @@ struct Runtime {
     error: Option<String>,
     last_initiative: i64,
     last_goal: i64,
+    quitting: bool,
+    quit_generation: u64,
 }
 impl Runtime {
     fn react(&mut self, event: &str) {
@@ -57,6 +61,7 @@ impl Runtime {
 }
 struct AppState {
     drag: Mutex<Option<platform::DragOrigin>>,
+    resize: Mutex<Option<platform::ResizeOrigin>>,
     runtime: Mutex<Runtime>,
     wake: Condvar,
     store: store::SettingsStore,
@@ -83,6 +88,7 @@ fn snapshot_value(state: &AppState, r: &Runtime) -> Value {
         "idleAdapter": r.idle_adapter, "platform": if platform::is_hyprland() { "Hyprland / Wayland" } else { std::env::consts::OS },
         "storagePath": state.store.root, "error": r.error,
         "rendererCompatibility": std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").as_deref() == Ok("1"),
+        "quitting": r.quitting,
     })
 }
 fn publish(app: &tauri::AppHandle) {
@@ -181,7 +187,8 @@ fn update_settings(
     state.save(&mut r)?;
     drop(r);
     if top_changed && active == "companion" {
-        platform::prepare(&app, "companion", top, platform::position(&app))?;
+        let size = platform::size(&app).unwrap_or(window_geometry::DEFAULT_SIZE);
+        platform::prepare(&app, "companion", top, platform::position(&app), size)?;
     }
     publish(&app);
     Ok(())
@@ -331,25 +338,36 @@ fn import_asset(
             }
         }
         "sprite" if png && emotions.contains(&id.as_str()) => "png",
-        "voice"
-            if (ogg || wav)
-                && !id.is_empty()
-                && id.len() <= 80
-                && id
-                    .bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-') =>
-        {
+        "voice" | "sfx" if (ogg || wav) && audio::valid_id(&id) => {
             if ogg {
                 "ogg"
             } else {
                 "wav"
             }
         }
-        _ => return Err("Нужен PNG/JPEG для фона, PNG для эмоции или WAV/OGG для голоса".into()),
+        _ => {
+            return Err(
+                "Нужен PNG/JPEG для фона, PNG для эмоции или WAV/OGG для голоса и эффекта".into(),
+            )
+        }
     };
+    // Keep the capacity check and insert under one lock, including concurrent WebView imports.
+    let mut r = state.runtime.lock().unwrap();
+    if kind == "voice" || kind == "sfx" {
+        let sounds = if kind == "voice" {
+            &r.db.settings.voices
+        } else {
+            &r.db.settings.sfx
+        };
+        if sounds.len() >= 200 && !sounds.contains_key(&id) {
+            return Err("Максимум 200 импортированных звуков каждого типа".into());
+        }
+    }
     // Unique filenames: do not overwrite resources currently being read by a webview.
+    static IMPORT_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let sequence = IMPORT_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let name = format!(
-        "{kind}-{}-{}.{}",
+        "{kind}-{}-{}-{sequence}.{}",
         if kind == "background" { "scene" } else { &id },
         state.now(),
         ext
@@ -357,11 +375,13 @@ fn import_asset(
     let path = state.store.root.join("assets").join(name);
     store::atomic_write(&path, &bytes)?;
     let path = path.to_string_lossy().into_owned();
-    let mut r = state.runtime.lock().unwrap();
     match kind.as_str() {
         "background" => r.db.settings.background = Some(path.clone()),
         "sprite" => {
             r.db.settings.sprites.insert(id, path.clone());
+        }
+        "sfx" => {
+            r.db.settings.sfx.insert(id, path.clone());
         }
         _ => {
             r.db.settings.voices.insert(id, path.clone());
@@ -377,6 +397,34 @@ fn reset_art(app: tauri::AppHandle, state: tauri::State<AppState>) -> Result<(),
     let mut r = state.runtime.lock().unwrap();
     r.db.settings.background = None;
     r.db.settings.sprites.clear();
+    state.save(&mut r)?;
+    drop(r);
+    publish(&app);
+    Ok(())
+}
+#[tauri::command]
+fn bind_sfx(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    event: String,
+    sound: Option<String>,
+) -> Result<(), String> {
+    let mut r = state.runtime.lock().unwrap();
+    r.db.settings.bind_sfx(&event, sound)?;
+    state.save(&mut r)?;
+    drop(r);
+    publish(&app);
+    Ok(())
+}
+#[tauri::command]
+fn clear_sound(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    kind: String,
+    id: String,
+) -> Result<(), String> {
+    let mut r = state.runtime.lock().unwrap();
+    r.db.settings.clear_sound(&kind, &id)?;
     state.save(&mut r)?;
     drop(r);
     publish(&app);
@@ -465,29 +513,59 @@ fn switch_window(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
     let state = app.state::<AppState>();
     if action == "quit" {
         let pos = platform::position(app);
+        let size = platform::size(app);
         let mut r = state.runtime.lock().unwrap();
-        if pos.is_some() {
-            r.db.settings.companion_position = pos;
+        if r.quitting {
+            return Ok(());
+        }
+        if r.active_window == "companion" {
+            if pos.is_some() {
+                r.db.settings.companion_position = pos;
+            }
+            if let Some(size) = size {
+                r.db.settings.companion_size = Some(window_geometry::bounded_size(size));
+            }
         }
         state.save(&mut r)?;
+        r.quitting = true;
+        r.quit_generation += 1;
+        let generation = r.quit_generation;
         drop(r);
-        app.exit(0);
+        publish(app);
+        let handle = app.clone();
+        // One bounded fail-safe if the active WebView cannot finish its presentation.
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_secs(6));
+            if let Err(error) = finish_quit(&handle, Some(generation)) {
+                eprintln!("{error}");
+            }
+        });
         return Ok(());
     }
     if !["main", "companion"].contains(&action) {
         return Err("Неизвестный режим окна".into());
     }
+    if state.runtime.lock().unwrap().quitting {
+        return Err("Приложение завершает работу".into());
+    }
     let position = platform::position(app);
-    let (top, pos) = {
+    let current_size = platform::size(app);
+    let (top, pos, size) = {
         let mut r = state.runtime.lock().unwrap();
-        if r.active_window == "companion" && position.is_some() {
-            r.db.settings.companion_position = position;
+        if r.active_window == "companion" {
+            if position.is_some() {
+                r.db.settings.companion_position = position;
+            }
+            if let Some(size) = current_size {
+                r.db.settings.companion_size = Some(window_geometry::bounded_size(size));
+            }
         }
         r.active_window = action.into();
         state.save(&mut r)?;
         (
             r.db.settings.always_on_top,
             r.db.settings.companion_position,
+            window_geometry::effective_size(r.db.settings.companion_size),
         )
     };
     let other = if action == "main" {
@@ -511,7 +589,7 @@ fn switch_window(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
     // Let the compositor map the surface before addressing it. One delayed action, no polling.
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(200));
-        if let Err(e) = platform::prepare(&handle, &label, top, pos) {
+        if let Err(e) = platform::prepare(&handle, &label, top, pos, size) {
             handle.state::<AppState>().runtime.lock().unwrap().error = Some(e);
             publish(&handle);
         }
@@ -522,6 +600,49 @@ fn switch_window(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
 #[tauri::command]
 fn window_action(app: tauri::AppHandle, action: String) -> Result<(), String> {
     switch_window(&app, &action)
+}
+
+fn finish_quit(app: &tauri::AppHandle, generation: Option<u64>) -> Result<(), String> {
+    let state = app.state::<AppState>();
+    let mut r = state.runtime.lock().unwrap();
+    if !r.quitting || generation.is_some_and(|value| value != r.quit_generation) {
+        return Ok(());
+    }
+    if let Err(error) = state.save(&mut r) {
+        r.quitting = false;
+        drop(r);
+        publish(app);
+        return Err(error);
+    }
+    drop(r);
+    app.exit(0);
+    Ok(())
+}
+#[tauri::command]
+fn complete_quit(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    if state.runtime.lock().unwrap().active_window != window.label() {
+        return Err("Выход подтверждает только активное окно".into());
+    }
+    finish_quit(&app, None)
+}
+#[tauri::command]
+fn cancel_quit(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    let mut r = state.runtime.lock().unwrap();
+    if r.active_window != window.label() {
+        return Err("Выход отменяет только активное окно".into());
+    }
+    r.quitting = false;
+    drop(r);
+    publish(&app);
+    Ok(())
 }
 
 #[tauri::command]
@@ -553,6 +674,98 @@ fn drag_companion(
     Ok(())
 }
 
+#[tauri::command]
+fn resize_companion(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    window: tauri::WebviewWindow,
+    phase: String,
+) -> Result<(), String> {
+    if window.label() != "companion" || !platform::is_hyprland() {
+        return Err(
+            "Изменение размера этим адаптером доступно только помощнику на Hyprland".into(),
+        );
+    }
+    let mut resize = state.resize.lock().unwrap();
+    match phase.as_str() {
+        "start" => *resize = Some(platform::begin_resize()?),
+        "move" => {
+            if let Some(resize) = resize.as_mut() {
+                platform::move_resize(resize)?;
+            }
+        }
+        "end" => {
+            if let Some(mut resize) = resize.take() {
+                platform::move_resize(&mut resize)?;
+                let mut r = state.runtime.lock().unwrap();
+                r.db.settings.companion_size = Some(resize.last);
+                state.save(&mut r)?;
+                drop(r);
+                publish(&app);
+            }
+        }
+        _ => return Err("Неизвестная фаза изменения размера".into()),
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn adjust_companion_size(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    window: tauri::WebviewWindow,
+    delta_width: i32,
+    delta_height: i32,
+) -> Result<(), String> {
+    if window.label() != "companion" {
+        return Err("Размер можно менять только у помощника".into());
+    }
+    let current = platform::size(&app).ok_or("Не удалось прочитать размер помощника")?;
+    let size = window_geometry::resized_size(current, (delta_width, delta_height));
+    platform::resize_to(&app, size)?;
+    let mut r = state.runtime.lock().unwrap();
+    r.db.settings.companion_size = Some(size);
+    state.save(&mut r)?;
+    drop(r);
+    publish(&app);
+    Ok(())
+}
+
+#[tauri::command]
+fn save_companion_geometry(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    if window.label() != "companion" {
+        return Err("Геометрия доступна только помощнику".into());
+    }
+    let position = platform::position(&app);
+    let size = platform::size(&app).map(window_geometry::bounded_size);
+    let mut r = state.runtime.lock().unwrap();
+    let mut changed = false;
+    if let Some(position) = position {
+        if r.db.settings.companion_position != Some(position) {
+            r.db.settings.companion_position = Some(position);
+            changed = true;
+        }
+    }
+    if let Some(size) = size {
+        if r.db.settings.companion_size != Some(size) {
+            r.db.settings.companion_size = Some(size);
+            changed = true;
+        }
+    }
+    if changed {
+        state.save(&mut r)?;
+    }
+    drop(r);
+    if changed {
+        publish(&app);
+    }
+    Ok(())
+}
+
 pub fn run() {
     // GTK's own file chooser/menu translations, scoped to this process only.
     #[cfg(target_os = "linux")]
@@ -566,10 +779,10 @@ pub fn run() {
             let epoch = (SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as i64).max(db.saved_at);
             let recovered = db.recover(epoch);
             let mut runtime = Runtime { db, active_window: "main".into(), reactions: VecDeque::new(), next_id: 0,
-                recovered, system_idle: false, idle_adapter: "connecting".into(), error: None, last_initiative: epoch, last_goal: 0 };
+                recovered, system_idle: false, idle_adapter: "connecting".into(), error: None, last_initiative: epoch, last_goal: 0, quitting: false, quit_generation: 0 };
             let launch_event = if runtime.db.timer.phase == timer::Phase::Focus { "launch" } else { "break_start" };
             runtime.react(launch_event);
-            app.manage(AppState { drag: Mutex::new(None), runtime: Mutex::new(runtime), wake: Condvar::new(), store, epoch, clock: Instant::now() });
+            app.manage(AppState { drag: Mutex::new(None), resize: Mutex::new(None), runtime: Mutex::new(runtime), wake: Condvar::new(), store, epoch, clock: Instant::now() });
             let state = app.state::<AppState>(); state.save(&mut state.runtime.lock().unwrap()).map_err(std::io::Error::other)?;
 
             use tauri::menu::{Menu, MenuItem};
@@ -613,8 +826,8 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![get_state, timer_action, claim_reaction, request_reaction,
-            update_settings, set_focus_minutes, adjust_focus_minutes, select_category, save_category, import_asset, reset_art, get_dialogues, save_dialogues,
-            export_data, window_action, drag_companion])
+            update_settings, set_focus_minutes, adjust_focus_minutes, select_category, save_category, import_asset, reset_art, bind_sfx, clear_sound, get_dialogues, save_dialogues,
+            export_data, window_action, complete_quit, cancel_quit, drag_companion, resize_companion, adjust_companion_size, save_companion_geometry])
         .run(tauri::generate_context!())
         .expect("Miku Focus startup failed; user data has not been discarded");
 }

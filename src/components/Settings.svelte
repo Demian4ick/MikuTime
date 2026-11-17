@@ -3,11 +3,15 @@
   import type { SaveStatus } from '../lib/autosave';
   import NumberSetting from './NumberSetting.svelte';
   import CategoryEditor from './CategoryEditor.svelte';
+  import SoundSettings from './SoundSettings.svelte';
+  import type { SoundKind } from '../lib/sounds';
   import { emotionFiles } from '../lib/emotions';
   import { emotionNames, talkativenessNames, idleStatusText } from '../lib/localization';
-  let { snapshot, save, status, categorySave, upload, resetArt, editDialogues }: {
+  let { snapshot, save, status, categorySave, upload, resetArt, editDialogues, bindSfx, clearSound, preview, stopPreview }: {
     snapshot: Snapshot; save: (patch: SettingsPatch) => Promise<void>; status: SaveStatus; categorySave: (category: Category) => Promise<void>;
     upload: (file: File, kind: string, id: string) => Promise<void>; resetArt: () => void; editDialogues: () => void;
+    bindSfx: (event: string, sound: string | null) => Promise<void>; clearSound: (kind: SoundKind, id: string) => Promise<void>;
+    preview: (kind: SoundKind, id: string) => Promise<void>; stopPreview: () => void;
   } = $props();
   let tab = $state('timer');
   let emotion = $state<Emotion>('Neutral');
@@ -23,7 +27,7 @@
 
 <section class="settings scroll-area">
   <div class="section-heading"><h2>Настройки</h2><span class="muted small-text" role="status">{status === 'saving' ? 'Сохранение…' : status === 'error' ? 'Ошибка сохранения' : 'Сохраняется автоматически'}</span></div>
-  <div class="subtabs"><button class:active={tab === 'timer'} onclick={() => tab = 'timer'}>Таймер</button><button class:active={tab === 'miku'} onclick={() => tab = 'miku'}>Мику и голос</button><button class:active={tab === 'categories'} onclick={() => tab = 'categories'}>Категории</button><button class:active={tab === 'system'} onclick={() => tab = 'system'}>Система</button></div>
+  <div class="subtabs"><button class:active={tab === 'timer'} onclick={() => tab = 'timer'}>Таймер</button><button class:active={tab === 'miku'} onclick={() => tab = 'miku'}>Мику и голос</button><button class:active={tab === 'sounds'} onclick={() => tab = 'sounds'}>Звуки</button><button class:active={tab === 'categories'} onclick={() => tab = 'categories'}>Категории</button><button class:active={tab === 'system'} onclick={() => tab = 'system'}>Система</button></div>
   {#if tab === 'timer'}
     <div class="settings-grid">
       <NumberSetting value={snapshot.settings.focusMinutes} label="Работа, мин" min={1} max={480} save={value => save({ focusMinutes: value })}/>
@@ -40,11 +44,13 @@
       <label>Разговорчивость<select value={snapshot.settings.talkativeness} onchange={e => change({ talkativeness: e.currentTarget.value as Snapshot['settings']['talkativeness'] })}>{#each Object.entries(talkativenessNames) as [id, name]}<option value={id}>{name}</option>{/each}</select></label>
       <div><NumberSetting value={snapshot.settings.textSpeed} label="Скорость появления символов, симв/с" min={0} max={200} save={value => save({ textSpeed: value })}/><small class="muted">0 — показывать текст сразу.</small></div>
     </div>
-    <label class="check-row"><input type="checkbox" checked={snapshot.settings.quietMode} onchange={e => change({ quietMode: e.currentTarget.checked })}/> Тихий режим — без озвучки, с субтитрами</label>
+    <label class="check-row"><input type="checkbox" checked={snapshot.settings.quietMode} onchange={e => change({ quietMode: e.currentTarget.checked })}/> Тихий режим — без голосов и эффектов, с субтитрами</label>
     <div class="asset-row"><div><b>Твой фон</b><small>PNG/JPEG, до 20 МиБ. Оригинал не изменяется.</small></div><label class="gloss file-button">Выбрать фон<input aria-label="Загрузить фон" type="file" accept="image/png,image/jpeg" onchange={e => files(e, 'background', '')}/></label></div>
     <div class="asset-row"><div><b>Заменить спрайт</b><select aria-label="Эмоция" bind:value={emotion}>{#each Object.keys(emotionFiles) as id}<option value={id}>{emotionNames[id as Emotion]}</option>{/each}</select></div><label class="gloss file-button">Загрузить PNG<input aria-label="Загрузить спрайт" type="file" accept="image/png" onchange={e => files(e, 'sprite', emotion)}/></label></div>
-    <div class="asset-row"><div><b>Озвучка персонажа</b><small>Имя файла — идентификатор озвучки в диалогах, без расширения.</small><small>Загружено: {Object.keys(snapshot.settings.voices).length}. Без аудио всё работает.</small></div><label class="gloss file-button">Загрузить звук<input aria-label="Загрузить озвучку" type="file" multiple accept=".wav,.ogg,audio/wav,audio/ogg" onchange={e => files(e, 'voice', '')}/></label></div>
+    <div class="asset-row"><div><b>Голоса и звуковые эффекты</b><small>Таблицы файлов, прослушивание, замена и назначения — в отдельном разделе.</small></div><button class="gloss" onclick={() => tab = 'sounds'}>Открыть таблицу звуков</button></div>
     <div class="inline-actions"><button class="gloss" onclick={editDialogues}>Редактировать JSON диалогов</button><button class="text-button" onclick={resetArt}>Вернуть исходные изображения</button></div>
+  {:else if tab === 'sounds'}
+    <SoundSettings settings={snapshot.settings} {save} {upload} {bindSfx} {clearSound} {preview} {stopPreview}/>
   {:else if tab === 'categories'}
     <p class="muted">Архивирование не удаляет историю. Категория уже запущенной сессии не меняется.</p>
     {#each snapshot.categories as category (category.id)}

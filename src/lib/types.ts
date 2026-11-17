@@ -7,10 +7,11 @@ export interface Category { id: string; name: string; color: string; archived: b
 export interface Settings {
   focusMinutes: number; shortBreakMinutes: number; longBreakMinutes: number; sessionsBeforeLong: number;
   autoStart: boolean; volume: number; textSpeed: number; quietMode: boolean; talkativeness: 'Quiet' | 'Balanced' | 'Chatty' | 'Disabled';
-  dailyGoalMinutes: number; alwaysOnTop: boolean; companionPosition: [number, number] | null;
+  dailyGoalMinutes: number; alwaysOnTop: boolean; companionPosition: [number, number] | null; companionSize: [number, number] | null;
   background: string | null; sprites: Partial<Record<Emotion, string>>; voices: Record<string, string>;
+  sfx: Record<string, string>; sfxBindings: Record<string, string>; sfxVolume: number;
 }
-export type SettingsPatch = Partial<Pick<Settings, 'focusMinutes' | 'shortBreakMinutes' | 'longBreakMinutes' | 'sessionsBeforeLong' | 'autoStart' | 'volume' | 'textSpeed' | 'quietMode' | 'talkativeness' | 'dailyGoalMinutes' | 'alwaysOnTop'>>;
+export type SettingsPatch = Partial<Pick<Settings, 'focusMinutes' | 'shortBreakMinutes' | 'longBreakMinutes' | 'sessionsBeforeLong' | 'autoStart' | 'volume' | 'sfxVolume' | 'textSpeed' | 'quietMode' | 'talkativeness' | 'dailyGoalMinutes' | 'alwaysOnTop'>>;
 export interface Timer {
   status: Status; phase: Phase; remainingMs: number; deadlineMs: number | null;
   segmentStartedAt: number | null; session: Session | null; cycle: number;
@@ -22,6 +23,7 @@ export interface Snapshot {
   reactions: ReactionEvent[]; recovered: boolean; idleAdapter: string; systemIdle: boolean;
   platform: string; storagePath: string; error: string | null;
   rendererCompatibility: boolean;
+  quitting: boolean;
 }
 export interface DialogueLine { en: string; ru: string; emotion: Emotion; voice?: string; durationMs?: number }
 export interface Dialogue { id: string; event: string; priority: number; cooldownMs: number; lines: DialogueLine[] }

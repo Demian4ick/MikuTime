@@ -33,9 +33,15 @@ pub struct Settings {
     pub daily_goal_minutes: u32,
     pub always_on_top: bool,
     pub companion_position: Option<(i32, i32)>,
+    pub companion_size: Option<(u32, u32)>,
     pub background: Option<String>,
     pub sprites: BTreeMap<String, String>,
     pub voices: BTreeMap<String, String>,
+    pub sfx: BTreeMap<String, String>,
+    pub sfx_bindings: BTreeMap<String, String>,
+    pub sfx_volume: f64,
+    #[serde(default)]
+    pub sound_defaults_version: u32,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -52,13 +58,25 @@ impl Default for Settings {
             daily_goal_minutes: 120,
             always_on_top: true,
             companion_position: None,
+            companion_size: None,
             background: None,
             sprites: BTreeMap::new(),
             voices: BTreeMap::new(),
+            sfx: BTreeMap::new(),
+            sfx_bindings: crate::audio::default_bindings(),
+            sfx_volume: 0.5,
+            sound_defaults_version: 1,
         }
     }
 }
 impl Settings {
+    pub fn migrate_sound_defaults(&mut self) {
+        if self.sound_defaults_version == 0 {
+            // Apply the user's newly approved five assignments once; unrelated bindings stay intact.
+            self.sfx_bindings.extend(crate::audio::default_bindings());
+            self.sound_defaults_version = 1;
+        }
+    }
     pub fn validate(&self) -> Result<(), String> {
         if !(1..=480).contains(&self.focus_minutes)
             || !(1..=180).contains(&self.short_break_minutes)
@@ -66,12 +84,55 @@ impl Settings {
             || !(1..=20).contains(&self.sessions_before_long)
             || !self.volume.is_finite()
             || !(0.0..=1.0).contains(&self.volume)
+            || !self.sfx_volume.is_finite()
+            || !(0.0..=1.0).contains(&self.sfx_volume)
+            || self.sfx.len() > 200
+            || self
+                .sfx
+                .iter()
+                .any(|(id, path)| !crate::audio::valid_id(id) || path.is_empty())
+            || !crate::audio::valid_bindings(&self.sfx_bindings, &self.sfx)
             || self.daily_goal_minutes > 1440
             || self.text_speed > 200
+            || self
+                .companion_size
+                .is_some_and(|size| crate::window_geometry::bounded_size(size) != size)
             || !["Quiet", "Balanced", "Chatty", "Disabled"].contains(&self.talkativeness.as_str())
         {
             return Err("Настройки вне допустимых границ".into());
         }
+        Ok(())
+    }
+    pub fn bind_sfx(&mut self, event: &str, sound: Option<String>) -> Result<(), String> {
+        if !crate::audio::event(event) {
+            return Err("Неизвестное звуковое событие".into());
+        }
+        let mut next = self.clone();
+        if let Some(sound) = sound {
+            next.sfx_bindings.insert(event.into(), sound);
+        } else {
+            next.sfx_bindings.remove(event);
+        }
+        next.validate()?;
+        *self = next;
+        Ok(())
+    }
+    pub fn clear_sound(&mut self, kind: &str, id: &str) -> Result<(), String> {
+        let mut next = self.clone();
+        match kind {
+            "voice" => {
+                next.voices.remove(id);
+            }
+            "sfx" => {
+                next.sfx.remove(id);
+                if !crate::audio::builtin(id) {
+                    next.sfx_bindings.retain(|_, sound| sound != id);
+                }
+            }
+            _ => return Err("Неизвестный тип звука".into()),
+        }
+        next.validate()?;
+        *self = next;
         Ok(())
     }
 }
@@ -86,6 +147,7 @@ pub struct SettingsPatch {
     pub sessions_before_long: Option<u32>,
     pub auto_start: Option<bool>,
     pub volume: Option<f64>,
+    pub sfx_volume: Option<f64>,
     pub text_speed: Option<u32>,
     pub quiet_mode: Option<bool>,
     pub talkativeness: Option<String>,
@@ -209,6 +271,7 @@ impl Database {
             sessions_before_long,
             auto_start,
             volume,
+            sfx_volume,
             text_speed,
             quiet_mode,
             talkativeness,
@@ -695,6 +758,24 @@ mod tests {
         let before = serde_json::to_value(&d).unwrap();
         assert!(d.adjust_focus_minutes(1).is_err());
         assert_eq!(serde_json::to_value(&d).unwrap(), before);
+    }
+    #[test]
+    fn companion_size_is_backward_compatible_and_preserved_by_settings_patches() {
+        let legacy: Settings = serde_json::from_str(r#"{"focusMinutes":30}"#).unwrap();
+        assert_eq!(legacy.companion_size, None);
+        let mut d = Database::default();
+        d.settings.companion_size = Some((220, 230));
+        d.update_settings(SettingsPatch {
+            volume: Some(0.4),
+            ..Default::default()
+        })
+        .unwrap();
+        let restored: Database = serde_json::from_value(serde_json::to_value(&d).unwrap()).unwrap();
+        assert_eq!(restored.settings.companion_size, Some((220, 230)));
+        assert_eq!(restored.timer.remaining_ms, d.timer.remaining_ms);
+        assert!(restored.settings.validate().is_ok());
+        d.settings.companion_size = Some((1, 1000));
+        assert!(d.settings.validate().is_err());
     }
     #[test]
     fn validate_settings() {

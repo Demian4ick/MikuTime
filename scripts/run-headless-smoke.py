@@ -1,16 +1,24 @@
 """Private Xvfb test with explicitly owned D-Bus/AT-SPI services, no systemd changes."""
+import argparse
 import json
 import os
 from pathlib import Path
 import subprocess
 import time
 from xml.sax.saxutils import escape
+from smoke_fixture import seed_silent_data
 
 root = Path(__file__).resolve().parent.parent
+parser = argparse.ArgumentParser()
+parser.add_argument('--debug', action='store_true')
+parser.add_argument('--quick', action='store_true', help='Skip real one-minute focus/rest waits during test development')
+args = parser.parse_args()
+profile = 'debug' if args.debug else 'release'
 if os.environ.get('MIKU_PRIVATE_SMOKE') != '1':
     raise SystemExit('Requires an explicitly isolated xvfb-run session')
 data = root / '.local-test' / f'headless-ru-{time.time_ns()}'
 data.mkdir(parents=True, mode=0o700)
+seed_silent_data(data / 'data/dev.mikufocus.desktop')
 runtime = data / 'runtime'
 runtime.mkdir(mode=0o700)
 bus_config = data / 'bus.conf'
@@ -37,6 +45,7 @@ for key in ['WAYLAND_DISPLAY', 'HYPRLAND_INSTANCE_SIGNATURE', 'AT_SPI_BUS_ADDRES
 os.environ.update({
     'GDK_BACKEND': 'x11', 'XDG_SESSION_TYPE': 'x11', 'XDG_CURRENT_DESKTOP': '',
     'GTK_USE_PORTAL': '0', 'GIO_USE_VFS': 'local', 'XDG_RUNTIME_DIR': str(runtime),
+    'GSETTINGS_BACKEND': 'memory',
     'XDG_DATA_HOME': str(data / 'data'), 'XDG_CONFIG_HOME': str(data / 'config'),
     'XDG_CACHE_HOME': str(data / 'cache'), 'WEBKIT_DISABLE_DMABUF_RENDERER': '1',
 })
@@ -69,7 +78,7 @@ with (data / 'desktop.log').open('w') as log:
         import gi
         gi.require_version('Atspi', '2.0')
         from gi.repository import Atspi
-        app = subprocess.Popen([str(root / 'src-tauri/target/release/miku-focus')], stdout=log, stderr=log)
+        app = subprocess.Popen([str(root / f'src-tauri/target/{profile}/miku-focus')], stdout=log, stderr=log)
         print('isolated test pid', app.pid, flush=True)
         for _ in range(100):
             desktop = Atspi.get_desktop(0)
@@ -79,11 +88,13 @@ with (data / 'desktop.log').open('w') as log:
             time.sleep(.2)
         else: raise RuntimeError('Native app did not register on the private accessibility bus')
         time.sleep(1)
-        subprocess.run(['python', str(root / 'scripts/desktop-smoke.py'), '--pid', str(app.pid), '--data', str(data / 'data/dev.mikufocus.desktop'), '--full', '--x11'], cwd=root, check=True)
+        command = ['python', str(root / 'scripts/desktop-smoke.py'), '--pid', str(app.pid), '--data', str(data / 'data/dev.mikufocus.desktop'), '--x11']
+        if not args.quick: command.append('--full')
+        subprocess.run(command, cwd=root, check=True)
         code = app.wait(timeout=15)
-        print('isolated release exit code', code, flush=True)
+        print(f'isolated {profile} exit code', code, flush=True)
         assert code == 0
-        (data / 'exit.json').write_text(json.dumps({'exitCode': code}))
+        (data / 'exit.json').write_text(json.dumps({'exitCode': code, 'profile': profile}))
     finally:
         stop_owned(app)
         stop_owned(registry)

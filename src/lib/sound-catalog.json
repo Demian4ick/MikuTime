@@ -1,0 +1,37 @@
+{
+  "effects": [
+    { "id": "menu-open", "name": "Открытие меню — короткое", "file": "/sfx/menu-open.wav", "originalFile": "menu-open.wav", "durationMs": 270 },
+    { "id": "menu-close", "name": "Закрытие меню — короткое", "file": "/sfx/menu-close.wav", "originalFile": "menu-close.wav", "durationMs": 260 },
+    { "id": "choice-hover", "name": "Наведение на выбор", "file": "/sfx/choice-hover.wav", "originalFile": "choice-hover.wav", "durationMs": 100 },
+    { "id": "high", "name": "Высокий короткий сигнал", "file": "/sfx/high.wav", "originalFile": "high.wav", "durationMs": 60 },
+    { "id": "low", "name": "Низкий короткий сигнал", "file": "/sfx/low.wav", "originalFile": "low.wav", "durationMs": 80 },
+    { "id": "soft", "name": "Мягкий короткий сигнал", "file": "/sfx/soft.wav", "originalFile": "soft.wav", "durationMs": 70 },
+    { "id": "game-menu-open", "name": "Открытие меню — длинное", "file": "/sfx/game-menu-open.ogg", "originalFile": "UI SFX_InGameMenu_Open.ogg", "durationMs": 2614 },
+    { "id": "game-menu-close", "name": "Закрытие меню — длинное", "file": "/sfx/game-menu-close.ogg", "originalFile": "UI SFX_InGameMenu_Close.ogg", "durationMs": 2523 },
+    { "id": "menu-hover", "name": "Наведение на кнопку меню", "file": "/sfx/menu-hover.ogg", "originalFile": "UI SFX_MENU_Hover.ogg", "durationMs": 216 }
+  ],
+  "events": [
+    { "id": "main_open", "name": "Открытие главного окна", "context": "any", "intervalMs": 120 },
+    { "id": "main_close", "name": "Переход к помощнику", "context": "any", "intervalMs": 120 },
+    { "id": "app_quit", "name": "Выход из приложения", "context": "any", "intervalMs": 0 },
+    { "id": "duration_up", "name": "Стрелка увеличения времени", "context": "any", "intervalMs": 0 },
+    { "id": "duration_down", "name": "Стрелка уменьшения времени", "context": "any", "intervalMs": 0 },
+    { "id": "menu_open", "name": "Нажатие вкладки или открытие меню", "context": "any", "intervalMs": 0 },
+    { "id": "menu_close", "name": "Закрытие меню или настроек", "context": "any", "intervalMs": 120 },
+    { "id": "choice_hover", "name": "Наведение на кнопку", "context": "any", "intervalMs": 120 },
+    { "id": "dialogue_continue", "name": "Клик для продолжения диалога", "context": "any", "intervalMs": 80 },
+    { "id": "launch", "name": "Приветствие при запуске", "context": "work", "intervalMs": 200 },
+    { "id": "start", "name": "Начало работы", "context": "work", "intervalMs": 200 },
+    { "id": "pause", "name": "Пауза работы", "context": "work", "intervalMs": 200 },
+    { "id": "resume", "name": "Продолжение работы", "context": "work", "intervalMs": 200 },
+    { "id": "focus_complete", "name": "Рабочее время истекло", "context": "work", "intervalMs": 200 },
+    { "id": "first_extension", "name": "Первое продление работы", "context": "work", "intervalMs": 200 },
+    { "id": "extension", "name": "Повторное продление работы", "context": "work", "intervalMs": 200 },
+    { "id": "break_start", "name": "Начало отдыха", "context": "rest", "intervalMs": 200 },
+    { "id": "break_complete", "name": "Отдых завершён", "context": "work", "intervalMs": 200 },
+    { "id": "break_skipped", "name": "Досрочное завершение отдыха", "context": "work", "intervalMs": 200 },
+    { "id": "reset", "name": "Сброс таймера", "context": "work", "intervalMs": 200 },
+    { "id": "goal", "name": "Дневная цель достигнута", "context": "any", "intervalMs": 1000 }
+  ],
+  "defaults": { "app_quit": "game-menu-close", "duration_up": "high", "duration_down": "low", "menu_open": "menu-open", "choice_hover": "menu-hover" }
+}
