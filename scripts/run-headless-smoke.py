@@ -12,6 +12,8 @@ root = Path(__file__).resolve().parent.parent
 parser = argparse.ArgumentParser()
 parser.add_argument('--debug', action='store_true')
 parser.add_argument('--quick', action='store_true', help='Skip real one-minute focus/rest waits during test development')
+parser.add_argument('--obsidian-only', action='store_true', help='Check only the native export-folder connection')
+parser.add_argument('--panel-only', action='store_true', help='Check panel mode and the native CLI')
 args = parser.parse_args()
 profile = 'debug' if args.debug else 'release'
 if os.environ.get('MIKU_PRIVATE_SMOKE') != '1':
@@ -46,6 +48,7 @@ os.environ.update({
     'GDK_BACKEND': 'x11', 'XDG_SESSION_TYPE': 'x11', 'XDG_CURRENT_DESKTOP': '',
     'GTK_USE_PORTAL': '0', 'GIO_USE_VFS': 'local', 'XDG_RUNTIME_DIR': str(runtime),
     'GSETTINGS_BACKEND': 'memory',
+    'PULSE_PROP': 'application.name=miku-ui-smoke module-stream-restore.id=miku-ui-smoke',
     'XDG_DATA_HOME': str(data / 'data'), 'XDG_CONFIG_HOME': str(data / 'config'),
     'XDG_CACHE_HOME': str(data / 'cache'), 'WEBKIT_DISABLE_DMABUF_RENDERER': '1',
 })
@@ -90,7 +93,9 @@ with (data / 'desktop.log').open('w') as log:
         time.sleep(1)
         command = ['python', str(root / 'scripts/desktop-smoke.py'), '--pid', str(app.pid), '--data', str(data / 'data/dev.mikufocus.desktop'), '--x11']
         if not args.quick: command.append('--full')
-        subprocess.run(command, cwd=root, check=True)
+        if args.obsidian_only: command.append('--obsidian-only')
+        if args.panel_only: command.append('--panel-only')
+        subprocess.run(command, cwd=root, check=True, timeout=300 if not args.quick else 180)
         code = app.wait(timeout=15)
         print(f'isolated {profile} exit code', code, flush=True)
         assert code == 0

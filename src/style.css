@@ -16,8 +16,8 @@
 .main-tabs button.active{color:#217b80;border-color:#48a9a7;background:linear-gradient(transparent,#fff9)}
 .nav-date{margin-left:auto;align-self:center;font-size:9px;color:#83a49b}
 .focus-scene{flex:1;min-height:245px;position:relative;background-position:center;background-size:cover;overflow:hidden;margin:7px 7px 0;border:1px solid #a0c6bd;box-shadow:inset 0 0 0 4px #effff64d}
-.main-character{position:absolute;left:-28px;bottom:-8px;width:calc(100% - 185px);height:100%;border:0;background:none;padding:0}
-.main-character img{width:100%;height:100%;object-fit:contain;object-position:center bottom;filter:drop-shadow(0 4px 4px #164b4536)}
+.main-character{position:absolute;left:-28px;bottom:0;width:calc(100% - 185px);height:100%;border:0;background:none;padding:0;overflow:hidden}
+.main-character img{position:absolute;inset:0 auto auto 50%;transform:translateX(-50%);width:auto;height:100%;max-width:none;object-fit:contain;filter:drop-shadow(0 4px 4px #164b4536)}
 .sprite-current{position:relative}
 .sprite-old{position:absolute!important;inset:0;z-index:1;animation:sprite-fade .24s forwards;pointer-events:none}
 @keyframes sprite-fade{to{opacity:0}}

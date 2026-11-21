@@ -64,3 +64,12 @@ test('editable dialogue manifest and required first-extension sequence', () => {
   assert.equal(first.lines[1].ru, 'Хе-хе! Ты такой старательный. Я горжусь тобой~ ♡');
   assert.throws(() => validateDialogues({ version: 2 }));
 });
+test('Senpai is reserved for six occasional lines and Russian addresses match the English scripts', () => {
+  const data = validateDialogues(JSON.parse(readFileSync(new URL('../public/dialogues.json', import.meta.url), 'utf8')));
+  const lines = data.dialogues.flatMap(dialogue => dialogue.lines);
+  const addressed = ['extra_surprised', 'focus_complete', 'goal', 'record', 'return', 'welcome'];
+  assert.equal(data.dialogues.length, 19); assert.equal(lines.length, 20);
+  assert.deepEqual(lines.filter(line => /Senpai/.test(line.en)).map(line => line.voice).sort(), addressed);
+  assert.deepEqual(lines.filter(line => /сэмпай/i.test(line.ru)).map(line => line.voice).sort(), addressed);
+  assert.equal(new Set(lines.map(line => line.voice)).size, 20);
+});

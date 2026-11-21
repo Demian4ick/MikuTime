@@ -1,6 +1,19 @@
 import type { Settings } from './types.ts';
 export interface AudioSource { url: string; release: () => void }
-export type AudioUrl = (path: string) => string | Promise<AudioSource>;
+export type AudioUrl = (path: string, signal?: AbortSignal) => string | Promise<AudioSource>;
+
+/** WebKit cannot reliably open imported WAV over asset://; fetch just the active line, never a voice library. */
+export async function loadVoiceSource(path: string, localUrl: (path: string) => string, signal?: AbortSignal): Promise<AudioSource> {
+  const response = await fetch(localUrl(path), { signal });
+  if (!response.ok) throw new Error('Не удалось открыть локальную озвучку.');
+  const limit = 20 * 1024 * 1024;
+  if (Number(response.headers.get('content-length')) > limit) throw new Error('Файл озвучки больше 20 МиБ.');
+  const bytes = await response.arrayBuffer();
+  if (bytes.byteLength > limit) throw new Error('Файл озвучки больше 20 МиБ.');
+  const blob = new Blob([bytes], { type: path.toLowerCase().endsWith('.ogg') ? 'audio/ogg' : 'audio/wav' });
+  const url = URL.createObjectURL(blob);
+  return { url, release: () => URL.revokeObjectURL(url) };
+}
 
 /** One lazily loaded audio element. Never preload a voice library. */
 export class VoiceManager {
@@ -9,9 +22,10 @@ export class VoiceManager {
   private label: string;
   private generation = 0;
   private volume = 1;
+  private loading: AbortController | null = null;
   constructor(label = 'Озвучка') { this.label = label; }
   onError: (message: string) => void = () => {};
-  stop(): void { this.generation++; this.finish?.(); }
+  stop(): void { this.generation++; this.loading?.abort(); this.loading = null; this.finish?.(); }
   configure(settings: Settings): void {
     this.volume = settings.volume;
     if (settings.quietMode) this.stop();
@@ -21,16 +35,22 @@ export class VoiceManager {
     this.stop();
     if (!key || settings.quietMode || !settings.voices[key] || signal.aborted) return Promise.resolve();
     const token = this.generation; this.volume = settings.volume;
+    const loading = new AbortController(); this.loading = loading;
+    const abortLoading = () => loading.abort();
+    signal.addEventListener('abort', abortLoading, { once: true });
     let source: string | AudioSource;
     try {
-      const result = localUrl(settings.voices[key]);
+      const result = localUrl(settings.voices[key], loading.signal);
       source = typeof result === 'string' ? result : await result;
     } catch (error) {
       if (token === this.generation && !signal.aborted) this.onError(`${this.label} ${key}: ${String(error)}`);
       return;
+    } finally {
+      signal.removeEventListener('abort', abortLoading);
+      if (this.loading === loading) this.loading = null;
     }
     const release = () => { if (typeof source !== 'string') source.release(); };
-    if (token !== this.generation || signal.aborted) { release(); return; }
+    if (token !== this.generation || signal.aborted || loading.signal.aborted) { release(); return; }
     return new Promise(resolve => {
       const audio = new Audio(); this.audio = audio; audio.preload = 'none'; audio.volume = this.volume;
       let done = false;

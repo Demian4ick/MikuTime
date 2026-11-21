@@ -1,11 +1,46 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { hoverButton, closePresentation, exitFadeMs, exitAudioLimitMs } from '../src/lib/interaction.ts';
+import { ArrowStepInput, hoverButton, closePresentation, exitFadeMs, exitAudioLimitMs } from '../src/lib/interaction.ts';
 import { defaultSoundBindings } from '../src/lib/sounds.ts';
 
 test('approved bindings match the requested buttons, hover and shutdown', () => {
-  assert.deepEqual(defaultSoundBindings, { app_quit: 'game-menu-close', duration_up: 'high', duration_down: 'low', menu_open: 'menu-open', choice_hover: 'menu-hover' });
+  assert.deepEqual(defaultSoundBindings, { app_quit: 'game-menu-close', duration_up: 'high', duration_down: 'low', menu_open: 'menu-open', choice_hover: 'menu-hover', menu_choice: 'choice-hover' });
   assert.ok(exitFadeMs < 2523 && exitAudioLimitMs > 2523);
+});
+test('numeric keyboard arrows report the actual change direction', () => {
+  const input = new ArrowStepInput();
+  input.keyDown('ArrowUp', 'number'); assert.equal(input.direction(10, 11), 1);
+  input.keyDown('ArrowDown', 'number'); assert.equal(input.direction(11, 10), -1);
+  input.keyUp(); assert.equal(input.direction(10, 11), null);
+});
+test('native numeric spinners repeat while held, but boundaries and invalid drafts stay silent', () => {
+  const input = new ArrowStepInput(); input.pointerDown(0, 'number');
+  assert.equal(input.direction(10, 11), 1); assert.equal(input.direction(11, 12), 1);
+  assert.equal(input.direction(12, 11), -1); assert.equal(input.direction(480, 480), null);
+  assert.equal(input.direction(undefined, 1), null); assert.equal(input.direction(1, undefined), null);
+  assert.equal(input.direction(NaN, 1), null); assert.equal(input.direction(1, Infinity), null);
+  input.pointerEnd(); assert.equal(input.direction(11, 12), null);
+});
+test('typing, paste, caret navigation and external changes are not mistaken for arrow steps', () => {
+  const input = new ArrowStepInput();
+  assert.equal(input.direction(10, 11), null);
+  input.pointerDown(0, 'number'); input.keyDown('1', 'number'); assert.equal(input.direction(10, 11), null);
+  input.keyDown('v', 'number'); assert.equal(input.direction(11, 22), null);
+  input.keyDown('ArrowLeft', 'number'); assert.equal(input.direction(22, 21), null);
+  input.pointerDown(2, 'number'); assert.equal(input.direction(21, 22), null);
+});
+test('range arrow keys support decimal steps, while dragging and Home/End stay silent', () => {
+  const input = new ArrowStepInput();
+  input.pointerDown(0, 'range'); assert.equal(input.direction(0.5, 0.6), null);
+  input.keyDown('ArrowRight', 'range'); assert.equal(input.direction(0.5, 0.55), 1);
+  input.keyDown('ArrowLeft', 'range'); assert.equal(input.direction(0.55, 0.5), -1);
+  input.keyDown('Home', 'range'); assert.equal(input.direction(0.5, 0), null);
+  input.keyDown('End', 'range'); assert.equal(input.direction(0, 1), null);
+});
+test('blur and cancelled input clear arrow intent without any timers', () => {
+  const input = new ArrowStepInput(); input.keyDown('ArrowUp', 'number'); input.reset();
+  assert.equal(input.direction(10, 11), null);
+  input.pointerDown(0, 'number'); input.reset(); assert.equal(input.direction(10, 11), null);
 });
 test('hover only targets enabled buttons and excludes characters, dialogue and preview areas', () => {
   const child = {} as Node;

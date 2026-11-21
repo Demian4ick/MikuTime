@@ -1,5 +1,5 @@
 import type { Dialogue, DialogueFile, DialogueLine, Emotion, Settings } from './types.ts';
-import { VoiceManager } from './voice.ts';
+import { VoiceManager, type AudioUrl } from './voice.ts';
 import { advanceCharacters } from './typing.ts';
 
 export interface VisualState { emotion: Emotion; ru: string; en: string; speaking: boolean; typing: boolean; awaitingInput: boolean }
@@ -25,10 +25,12 @@ export class ReactionController {
   private awaitingDecision = false;
   private data: DialogueFile;
   private settings: () => Settings;
-  private url: (path: string) => string;
+  private url: AudioUrl;
   private visual: (value: VisualState) => void;
-  constructor(data: DialogueFile, settings: () => Settings, url: (path: string) => string, visual: (value: VisualState) => void, onError: (message: string) => void = () => {}) {
+  private completionQuestion: boolean;
+  constructor(data: DialogueFile, settings: () => Settings, url: AudioUrl, visual: (value: VisualState) => void, onError: (message: string) => void = () => {}, options: { completionQuestion?: boolean } = {}) {
     this.data = data; this.settings = settings; this.url = url; this.visual = visual;
+    this.completionQuestion = options.completionQuestion !== false;
     this.voice.onError = onError;
   }
   replace(data: DialogueFile): void { this.data = data; }
@@ -45,18 +47,19 @@ export class ReactionController {
     if (!this.current) this.visual(this.fallback());
   }
   private allowed(event: string): boolean {
+    if (event === 'focus_complete' && !this.completionQuestion) return false;
     return this.resting
       ? !['start', 'pause', 'resume', 'focus_complete', 'first_extension', 'extension', 'long_work', 'touch'].includes(event)
       : !['break_start', 'break_touch'].includes(event);
   }
   private fallback(): VisualState {
-    if (this.awaitingDecision && !this.resting) {
+    if (this.awaitingDecision && !this.resting && this.completionQuestion) {
       const line = this.data.dialogues.find(d => d.event === 'focus_complete')?.lines[0];
       return { emotion: line?.emotion ?? 'Happy', ru: line?.ru ?? 'Ты справился, сэмпай! Ещё пять минут или заслуженный отдых? ♡', en: line?.en ?? '', speaking: false, typing: false, awaitingInput: false };
     }
     return this.resting
-      ? { emotion: 'Calm', ru: 'Отдыхай, сэмпай. Торопиться некуда~ ♡', en: 'Rest easy, Senpai. There is no hurry.', speaking: false, typing: false, awaitingInput: false }
-      : { emotion: 'Neutral', ru: 'Я рядом, сэмпай. Всё получится~ ♡', en: "I'm here with you, Senpai.", speaking: false, typing: false, awaitingInput: false };
+      ? { emotion: 'Calm', ru: 'Отдыхай. Торопиться некуда~ ♡', en: 'Rest easy. There is no hurry.', speaking: false, typing: false, awaitingInput: false }
+      : { emotion: 'Neutral', ru: 'Я рядом. Всё получится~ ♡', en: "I'm here with you.", speaking: false, typing: false, awaitingInput: false };
   }
   event(event: string): void {
     if (this.disposed || !this.allowed(event)) return;

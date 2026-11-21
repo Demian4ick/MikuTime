@@ -1,6 +1,11 @@
 mod audio;
 mod dialogues;
+mod folder_dialog;
 mod idle;
+mod obsidian;
+mod panel;
+#[cfg(target_os = "linux")]
+mod panel_ipc;
 mod platform;
 mod store;
 mod timer;
@@ -14,7 +19,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{Emitter, Manager};
-use timer::{Category, Database, SettingsPatch};
+use timer::{BackgroundMode, Category, Database, SettingsPatch};
 
 #[derive(Clone, Serialize)]
 struct ReactionEvent {
@@ -47,6 +52,9 @@ impl Runtime {
         });
     }
     fn initiative(&mut self, event: &str, now: i64) {
+        if self.active_window == "panel" {
+            return;
+        }
         let interval = match self.db.settings.talkativeness.as_str() {
             "Disabled" => return,
             "Quiet" => 60,
@@ -65,6 +73,8 @@ struct AppState {
     runtime: Mutex<Runtime>,
     wake: Condvar,
     store: store::SettingsStore,
+    obsidian: obsidian::ExportService,
+    panel: panel::Integration,
     epoch: i64,
     clock: Instant,
 }
@@ -73,8 +83,12 @@ impl AppState {
         self.epoch + self.clock.elapsed().as_millis() as i64
     }
     fn save(&self, runtime: &mut Runtime) -> Result<(), String> {
-        let result = self.store.save(&runtime.db.checkpoint(self.now()));
+        let checkpoint = runtime.db.checkpoint(self.now());
+        let result = self.store.save(&checkpoint);
         runtime.error = result.as_ref().err().cloned();
+        if result.is_ok() {
+            self.obsidian.enqueue(&checkpoint, false);
+        }
         result
     }
 }
@@ -89,11 +103,17 @@ fn snapshot_value(state: &AppState, r: &Runtime) -> Value {
         "storagePath": state.store.root, "error": r.error,
         "rendererCompatibility": std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").as_deref() == Ok("1"),
         "quitting": r.quitting,
+        "obsidian": state.obsidian.status(),
+        "panel": { "error": state.panel.error(), "waybarConfig": state.panel.config },
     })
 }
 fn publish(app: &tauri::AppHandle) {
     let state = app.state::<AppState>();
     let r = state.runtime.lock().unwrap();
+    state
+        .panel
+        .hub
+        .publish(panel::View::capture(&r.db, state.now()));
     // Only the visible UI receives clock messages, full snapshots only on changes.
     let _ = app.emit("state", snapshot_value(&state, &r));
 }
@@ -180,13 +200,18 @@ fn update_settings(
 ) -> Result<(), String> {
     let mut r = state.runtime.lock().unwrap();
     let previous_top = r.db.settings.always_on_top;
+    let previous_mode = r.db.settings.background_mode;
     r.db.update_settings(patch)?;
     let top_changed = previous_top != r.db.settings.always_on_top;
     let active = r.active_window.clone();
     let top = r.db.settings.always_on_top;
+    let mode_changed = previous_mode != r.db.settings.background_mode;
     state.save(&mut r)?;
     drop(r);
-    if top_changed && active == "companion" {
+    if mode_changed && active != "main" {
+        switch_window(&app, "background")?;
+    }
+    if top_changed && active == "companion" && !mode_changed {
         let size = platform::size(&app).unwrap_or(window_geometry::DEFAULT_SIZE);
         platform::prepare(&app, "companion", top, platform::position(&app), size)?;
     }
@@ -509,6 +534,61 @@ fn export_data(state: tauri::State<AppState>, format: String) -> Result<String, 
     Ok(path.to_string_lossy().into_owned())
 }
 
+fn queue_obsidian(app: &tauri::AppHandle) {
+    let state = app.state::<AppState>();
+    let r = state.runtime.lock().unwrap();
+    state.obsidian.enqueue(&r.db.checkpoint(state.now()), true);
+    drop(r);
+    publish(app);
+}
+
+#[tauri::command]
+async fn choose_obsidian_folder(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<bool, String> {
+    if window.label() != "main" {
+        return Err("Выбрать папку можно только в главном окне".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let previous = app.state::<AppState>().obsidian.status().folder;
+        let Some(folder) = folder_dialog::pick_folder(&app, &window, previous)? else {
+            return Ok(false);
+        };
+        app.state::<AppState>().obsidian.configure(Some(&folder))?;
+        queue_obsidian(&app);
+        Ok(true)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn disconnect_obsidian(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("Отключить выгрузку можно только в главном окне".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        app.state::<AppState>().obsidian.configure(None)?;
+        publish(&app);
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+fn refresh_obsidian(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("Обновить выгрузку можно только в главном окне".into());
+    }
+    queue_obsidian(&app);
+    Ok(())
+}
+
 fn switch_window(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
     let state = app.state::<AppState>();
     if action == "quit" {
@@ -526,11 +606,31 @@ fn switch_window(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
                 r.db.settings.companion_size = Some(window_geometry::bounded_size(size));
             }
         }
-        state.save(&mut r)?;
+        let panel_quit = r.active_window == "panel";
+        if let Err(error) = state.save(&mut r) {
+            drop(r);
+            if panel_quit {
+                let _ = switch_window(app, "main");
+            } else {
+                publish(app);
+            }
+            return Err(error);
+        }
         r.quitting = true;
+        if panel_quit {
+            r.active_window = "main".into();
+        }
         r.quit_generation += 1;
         let generation = r.quit_generation;
         drop(r);
+        // A visible owned window hosts the existing save/SFX/black-fade shutdown.
+        if panel_quit {
+            if let Some(main) = app.get_webview_window("main") {
+                if let Err(error) = main.show() {
+                    eprintln!("{error}");
+                }
+            }
+        }
         publish(app);
         let handle = app.clone();
         // One bounded fail-safe if the active WebView cannot finish its presentation.
@@ -542,8 +642,23 @@ fn switch_window(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
         });
         return Ok(());
     }
-    if !["main", "companion"].contains(&action) {
+    let action = if action == "background" {
+        let r = state.runtime.lock().unwrap();
+        if r.db.settings.background_mode == BackgroundMode::Panel && state.panel.error().is_none() {
+            "panel"
+        } else {
+            "companion"
+        }
+    } else {
+        action
+    };
+    if !["main", "companion", "panel"].contains(&action) {
         return Err("Неизвестный режим окна".into());
+    }
+    if action == "panel"
+        && state.runtime.lock().unwrap().db.settings.background_mode != BackgroundMode::Panel
+    {
+        return Err("Сначала включите режим панели в настройках".into());
     }
     if state.runtime.lock().unwrap().quitting {
         return Err("Приложение завершает работу".into());
@@ -560,14 +675,35 @@ fn switch_window(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
                 r.db.settings.companion_size = Some(window_geometry::bounded_size(size));
             }
         }
+        let previous_active = r.active_window.clone();
+        let from_panel = previous_active == "panel";
         r.active_window = action.into();
-        state.save(&mut r)?;
+        // Recovery/opening must work even if app-data temporarily cannot be written.
+        // No geometry or timer mutation needs persistence on panel -> main.
+        if !(from_panel && action == "main") {
+            if let Err(error) = state.save(&mut r) {
+                r.active_window = previous_active;
+                drop(r);
+                publish(app);
+                return Err(error);
+            }
+        }
         (
             r.db.settings.always_on_top,
             r.db.settings.companion_position,
             window_geometry::effective_size(r.db.settings.companion_size),
         )
     };
+    if action == "panel" {
+        for label in ["main", "companion"] {
+            app.get_webview_window(label)
+                .ok_or("Окно недоступно")?
+                .hide()
+                .map_err(|e| e.to_string())?;
+        }
+        publish(app);
+        return Ok(());
+    }
     let other = if action == "main" {
         "companion"
     } else {
@@ -589,6 +725,13 @@ fn switch_window(app: &tauri::AppHandle, action: &str) -> Result<(), String> {
     // Let the compositor map the surface before addressing it. One delayed action, no polling.
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(200));
+        {
+            let state = handle.state::<AppState>();
+            let r = state.runtime.lock().unwrap();
+            if r.active_window != label || r.quitting {
+                return;
+            }
+        }
         if let Err(e) = platform::prepare(&handle, &label, top, pos, size) {
             handle.state::<AppState>().runtime.lock().unwrap().error = Some(e);
             publish(&handle);
@@ -615,6 +758,11 @@ fn finish_quit(app: &tauri::AppHandle, generation: Option<u64>) -> Result<(), St
         return Err(error);
     }
     drop(r);
+    if !state.obsidian.flush(Duration::from_secs(2)) {
+        eprintln!(
+            "Miku Focus: автовыгрузка не завершилась перед выходом; локальная история сохранена."
+        );
+    }
     app.exit(0);
     Ok(())
 }
@@ -766,68 +914,101 @@ fn save_companion_geometry(
     Ok(())
 }
 
+pub fn run_panel_cli() -> Option<i32> {
+    #[cfg(target_os = "linux")]
+    {
+        panel_ipc::run_cli()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        None
+    }
+}
+
 pub fn run() {
     // GTK's own file chooser/menu translations, scoped to this process only.
     #[cfg(target_os = "linux")]
     std::env::set_var("LANGUAGE", "ru");
     platform::configure_graphics();
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(windows)]
+    let builder = builder.plugin(tauri_plugin_dialog::init());
+    builder
         .setup(|app| {
             let root = app.path().app_data_dir()?;
             let store = store::SettingsStore::new(root).map_err(std::io::Error::other)?;
             let mut db = store.load().map_err(std::io::Error::other)?;
+            let handle = app.handle().clone();
+            let obsidian = obsidian::ExportService::new(&store.root, std::env::consts::OS, move |status| {
+                let _ = handle.emit("obsidian-export", status);
+            });
+            let handle = app.handle().clone();
+            let panel = panel::Integration::new(&store.root, move || {
+                if handle.try_state::<AppState>().is_none() { return Err("Miku Focus ещё запускается".into()); }
+                switch_window(&handle, "main")
+            });
             let epoch = (SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as i64).max(db.saved_at);
             let recovered = db.recover(epoch);
             let mut runtime = Runtime { db, active_window: "main".into(), reactions: VecDeque::new(), next_id: 0,
                 recovered, system_idle: false, idle_adapter: "connecting".into(), error: None, last_initiative: epoch, last_goal: 0, quitting: false, quit_generation: 0 };
             let launch_event = if runtime.db.timer.phase == timer::Phase::Focus { "launch" } else { "break_start" };
             runtime.react(launch_event);
-            app.manage(AppState { drag: Mutex::new(None), resize: Mutex::new(None), runtime: Mutex::new(runtime), wake: Condvar::new(), store, epoch, clock: Instant::now() });
+            app.manage(AppState { drag: Mutex::new(None), resize: Mutex::new(None), runtime: Mutex::new(runtime), wake: Condvar::new(), store, obsidian, panel, epoch, clock: Instant::now() });
             let state = app.state::<AppState>(); state.save(&mut state.runtime.lock().unwrap()).map_err(std::io::Error::other)?;
 
             use tauri::menu::{Menu, MenuItem};
             let show = MenuItem::with_id(app, "main", "Открыть Miku Focus", true, None::<&str>)?;
-            let companion = MenuItem::with_id(app, "companion", "Компактный помощник", true, None::<&str>)?;
+            let companion = MenuItem::with_id(app, "background", "Свернуть в выбранный режим", true, None::<&str>)?;
             let quit = MenuItem::with_id(app, "quit", "Сохранить и выйти", true, None::<&str>)?;
+            #[cfg(windows)]
+            let panel_status = MenuItem::with_id(app, "panel-time", "Таймер в трее отключён", false, None::<&str>)?;
+            #[cfg(windows)]
+            let menu = Menu::with_items(app, &[&panel_status, &show, &companion, &quit])?;
+            #[cfg(not(windows))]
             let menu = Menu::with_items(app, &[&show, &companion, &quit])?;
-            let mut tray = tauri::tray::TrayIconBuilder::new().tooltip("Miku Focus").menu(&menu)
+            let mut tray = tauri::tray::TrayIconBuilder::with_id(panel::TRAY_ID).tooltip("Miku Focus").menu(&menu)
                 .on_menu_event(|app, event| { if let Err(e) = switch_window(app, event.id.as_ref()) { eprintln!("{e}"); } });
             if let Some(icon) = app.default_window_icon() { tray = tray.icon(icon.clone()); }
             tray.build(app)?;
+            #[cfg(windows)]
+            panel::start_native(app.handle().clone(), state.panel.hub.clone(), state.panel.error.clone(), panel_status);
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 let mut last_checkpoint = 0;
+                let mut last_export_retry = 0;
                 loop {
                     let state = handle.state::<AppState>();
                     let mut r = state.runtime.lock().unwrap(); let now = state.now();
+                    if now - last_export_retry >= 30_000 { state.obsidian.retry(); last_export_retry = now; }
                     let event = r.db.tick(now);
                     if let Some(event) = event { r.react(event); }
                     let before = r.next_id;
                     let long_work = r.db.timer.session.as_ref().is_some_and(|s| s.work_ms() + r.db.timer.segment_started_at.map(|t| now - t).unwrap_or(0) >= 60 * 60_000);
-                    if !r.system_idle { r.initiative(if long_work { "long_work" } else { "company" }, now); }
+                    if !r.system_idle && r.active_window != "panel" { r.initiative(if long_work { "long_work" } else { "company" }, now); }
                     if (r.db.running() && now - last_checkpoint >= 30_000) || event.is_some() { let _ = state.save(&mut r); last_checkpoint = now; }
                     let running = r.db.running(); let active = r.active_window.clone();
-                    if running { let _ = handle.emit_to(&active, "clock", json!({ "now": now, "remainingMs": r.db.remaining(now), "timer": r.db.timer })); }
+                    state.panel.hub.publish(panel::View::capture(&r.db, now));
+                    if running && active != "panel" { let _ = handle.emit_to(&active, "clock", json!({ "now": now, "remainingMs": r.db.remaining(now), "timer": r.db.timer })); }
                     if event.is_some() || before != r.next_id { let _ = handle.emit("state", snapshot_value(&state, &r)); }
                     let timeout = if running { 1 } else { 30 };
                     let _guard = state.wake.wait_timeout(r, Duration::from_secs(timeout)).unwrap();
                 }
             });
             idle::start(app.handle().clone()); platform::watch_focus(app.handle().clone());
-            let mode = if std::env::args().any(|a| a == "--companion") { "companion" } else { "main" };
+            let mode = if std::env::args().any(|a| a == "--companion") { "background" } else { "main" };
             switch_window(app.handle(), mode).map_err(std::io::Error::other)?;
             Ok(())
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 api.prevent_close();
-                let action = if window.label() == "main" { "companion" } else { "main" };
+                let action = if window.label() == "main" { "background" } else { "main" };
                 if let Err(e) = switch_window(window.app_handle(), action) { eprintln!("{e}"); }
             }
         })
         .invoke_handler(tauri::generate_handler![get_state, timer_action, claim_reaction, request_reaction,
             update_settings, set_focus_minutes, adjust_focus_minutes, select_category, save_category, import_asset, reset_art, bind_sfx, clear_sound, get_dialogues, save_dialogues,
-            export_data, window_action, complete_quit, cancel_quit, drag_companion, resize_companion, adjust_companion_size, save_companion_geometry])
+            export_data, choose_obsidian_folder, disconnect_obsidian, refresh_obsidian, window_action, complete_quit, cancel_quit, drag_companion, resize_companion, adjust_companion_size, save_companion_geometry])
         .run(tauri::generate_context!())
         .expect("Miku Focus startup failed; user data has not been discarded");
 }

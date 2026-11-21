@@ -10,12 +10,13 @@ const data: DialogueFile = { version: 1, dialogues: [
   { id: 'low', event: 'low', priority: 1, cooldownMs: 1000, lines: [{ en: 'low', ru: '', emotion: 'Calm', durationMs: 100 }] },
   { id: 'high', event: 'high', priority: 10, cooldownMs: 0, lines: [{ en: 'high', ru: '', emotion: 'Happy', durationMs: 100 }] },
 ] };
-test('reopening a claimed decision restores Happy and the question instead of Neutral', async () => {
+test('the companion suppresses a claimed question and the main window restores Happy from the decision state', async () => {
   const file: DialogueFile = { version: 1, dialogues: [{ id: 'win', event: 'focus_complete', priority: 10, cooldownMs: 0,
     lines: [{ en: '', ru: 'Победа! Ещё пять минут или отдых?', emotion: 'Happy' }] }] };
   let state: import('../src/lib/reactions.ts').VisualState | undefined;
-  const create = () => new ReactionController(file, () => ({ ...settings, textSpeed: 0 }), p => p, value => state = value);
-  const companion = create(); companion.setContext(false); companion.setDecision(true); companion.event('focus_complete');
+  const create = (completionQuestion = true) => new ReactionController(file, () => ({ ...settings, textSpeed: 0 }), p => p, value => state = value, undefined, { completionQuestion });
+  const companion = create(false); companion.setContext(false); companion.setDecision(true); companion.event('focus_complete');
+  assert.equal(state!.speaking, false); assert.doesNotMatch(state!.ru, /пять минут|Победа/);
   companion.dispose(); await delay(1);
   const main = create(); main.setContext(false); main.setDecision(true); main.event('focus_complete');
   try {
@@ -25,6 +26,27 @@ test('reopening a claimed decision restores Happy and the question instead of Ne
     main.setDecision(false); assert.equal(state!.emotion, 'Neutral');
     main.setContext(true); assert.equal(state!.emotion, 'Calm');
   } finally { main.dispose(); }
+});
+test('a voiced completion cannot allocate audio or show its question in the companion, while other dialogue still works', () => {
+  const original = globalThis.Audio;
+  Object.defineProperty(globalThis, 'Audio', { value: class { constructor() { assert.fail('the question must not play in the companion'); } }, configurable: true, writable: true });
+  const states: import('../src/lib/reactions.ts').VisualState[] = [];
+  const file: DialogueFile = { version: 1, dialogues: [
+    { id: 'question', event: 'focus_complete', priority: 10, cooldownMs: 0, lines: [{ en: 'Five more minutes?', ru: 'Ещё пять минут?', emotion: 'Happy', voice: 'question' }] },
+    { id: 'touch', event: 'touch', priority: 2, cooldownMs: 0, lines: [{ en: 'Hello!', ru: 'Привет!', emotion: 'Pleased' }] },
+  ] };
+  const controller = new ReactionController(file, () => ({ ...settings, quietMode: false, textSpeed: 0, voices: { question: '/local/question.wav' } }), p => p, state => states.push(state), assert.fail, { completionQuestion: false });
+  try {
+    controller.setContext(false); controller.setDecision(true); controller.event('focus_complete');
+    assert.ok(states.every(state => !state.speaking && !state.ru.includes('Ещё пять минут')));
+    controller.event('touch'); assert.equal(states.at(-1)!.ru, 'Привет!'); assert.equal(states.at(-1)!.speaking, true);
+    controller.setDecision(false); controller.setDecision(true); controller.event('focus_complete');
+    assert.equal(states.at(-1)!.ru, 'Привет!');
+  } finally {
+    controller.dispose();
+    if (original === undefined) delete (globalThis as { Audio?: unknown }).Audio;
+    else Object.defineProperty(globalThis, 'Audio', { value: original, configurable: true, writable: true });
+  }
 });
 test('higher-priority reaction interrupts and cooldown prevents repeats', async () => {
   const lines: string[] = [];

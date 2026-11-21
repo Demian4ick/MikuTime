@@ -37,9 +37,11 @@
       {#if t.status !== 'Idle'}<button class="text-button" onclick={() => act('reset')}>↺ Сбросить</button>{/if}
     {/if}
   </div>
-  {#if !compact}<div class="cycle">{resting ? 'Следующая сессия' : 'Сессия'} {t.cycle % snapshot.settings.sessionsBeforeLong + 1} / {snapshot.settings.sessionsBeforeLong} <span>✧</span></div>{/if}
+  {#if !compact}<div class="cycle"><div>{resting ? 'Следующая сессия' : 'Сессия'} {t.cycle % snapshot.settings.sessionsBeforeLong + 1} / {snapshot.settings.sessionsBeforeLong} <span>✧</span></div><button class="text-button" disabled={t.cycle === 0} title="Начать отсчёт сессий с первой. Текущий таймер и история сохранятся." onclick={() => act('reset_cycle')}>↺ Сбросить сессии</button></div>{/if}
 </section>
 
 <style>
   .timer-readout{display:flex;align-items:center;justify-content:center;gap:8px;margin:3px 0 8px}
+  .cycle{display:flex;align-items:center;justify-content:center;gap:4px;flex-wrap:wrap}
+  .cycle .text-button{padding:2px 3px;font-size:9px;letter-spacing:0}
 </style>

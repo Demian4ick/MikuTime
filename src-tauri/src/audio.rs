@@ -59,7 +59,7 @@ mod tests {
         assert!(!event("arbitrary_command"));
         assert!(!valid_id("../bad"));
         assert!(valid_bindings(&default_bindings(), &BTreeMap::new()));
-        assert_eq!(default_bindings().len(), 5);
+        assert_eq!(default_bindings().len(), 6);
     }
     #[test]
     fn legacy_settings_add_approved_audio_defaults_and_keep_existing_voices() {
@@ -87,7 +87,24 @@ mod tests {
             serde_json::from_value(serde_json::to_value(&settings).unwrap()).unwrap();
         restored.migrate_sound_defaults();
         assert!(!restored.sfx_bindings.contains_key("choice_hover"));
-        assert_eq!(restored.sound_defaults_version, 1);
+        assert_eq!(restored.sound_defaults_version, 2);
+    }
+    #[test]
+    fn upgrading_v1_adds_only_inner_menu_sound_and_keeps_existing_disabled_sounds_disabled() {
+        let mut settings: crate::timer::Settings = serde_json::from_str(r#"{"soundDefaultsVersion":1,"sfxBindings":{"duration_up":"soft"},"quietMode":true,"sfxVolume":0.2}"#).unwrap();
+        settings.migrate_sound_defaults();
+        assert_eq!(settings.sfx_bindings.len(), 2);
+        assert_eq!(settings.sfx_bindings["duration_up"], "soft");
+        assert_eq!(settings.sfx_bindings["menu_choice"], "choice-hover");
+        assert!(!settings.sfx_bindings.contains_key("choice_hover"));
+        assert!(!settings.sfx_bindings.contains_key("menu_open"));
+        assert!(settings.quiet_mode);
+        assert_eq!(settings.sfx_volume, 0.2);
+        settings.bind_sfx("menu_choice", None).unwrap();
+        let mut restored: crate::timer::Settings =
+            serde_json::from_value(serde_json::to_value(&settings).unwrap()).unwrap();
+        restored.migrate_sound_defaults();
+        assert!(!restored.sfx_bindings.contains_key("menu_choice"));
     }
     #[test]
     fn individual_bindings_are_atomic_and_unknown_events_or_sounds_do_not_mutate_settings() {

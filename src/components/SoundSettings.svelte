@@ -5,12 +5,15 @@
   import { validateDialogues } from '../lib/dialogues';
   import { effectRows, fileName, soundEvents, voiceRows, type SoundKind } from '../lib/sounds';
   import NumberSetting from './NumberSetting.svelte';
-  let { settings, save, upload, bindSfx, clearSound, preview, stopPreview }: {
+  import type { ArrowDirection } from '../lib/interaction';
+  let { settings, save, upload, bindSfx, clearSound, preview, stopPreview, arrowSound, choiceSound }: {
     settings: Settings; save: (patch: SettingsPatch) => Promise<void>;
     upload: (file: File, kind: string, id: string) => Promise<void>;
     bindSfx: (event: string, sound: string | null) => Promise<void>;
     clearSound: (kind: SoundKind, id: string) => Promise<void>;
     preview: (kind: SoundKind, id: string) => Promise<void>; stopPreview: () => void;
+    arrowSound: (direction: ArrowDirection) => void;
+    choiceSound: () => void;
   } = $props();
   let tab = $state<'sfx' | 'voice'>('sfx');
   let query = $state(''), error = $state(''), busy = $state(false);
@@ -22,6 +25,7 @@
   const matches = (...values: string[]) => !search || values.join(' ').toLocaleLowerCase('ru-RU').includes(search);
   const usage = (id: string) => soundEvents.filter(event => settings.sfxBindings?.[event.id] === id).map(event => event.name);
   function stop() { generation++; stopPreview(); playing = ''; }
+  function changeTab(next: typeof tab) { stop(); choiceSound(); tab = next; }
   async function play(kind: SoundKind, id: string) {
     const key = `${kind}:${id}`;
     if (playing === key) { stop(); return; }
@@ -66,13 +70,13 @@
 
 <div class="sound-settings" data-no-sfx>
   <div class="sound-toolbar">
-    <div class="sound-tabs" aria-label="Типы звуков"><button class:active={tab === 'sfx'} onclick={() => { stop(); tab = 'sfx'; }}>Эффекты ({effects.length})</button><button class:active={tab === 'voice'} onclick={() => { stop(); tab = 'voice'; }}>Голоса ({voices.length})</button></div>
+    <div class="sound-tabs" aria-label="Типы звуков"><button class:active={tab === 'sfx'} onclick={() => changeTab('sfx')}>Эффекты ({effects.length})</button><button class:active={tab === 'voice'} onclick={() => changeTab('voice')}>Голоса ({voices.length})</button></div>
     <input type="search" aria-label="Поиск звуков" placeholder="Звук, файл или реплика…" bind:value={query}/>
     <button class="gloss small" disabled={!playing} onclick={stop}>■ Остановить</button>
   </div>
-  <details class="volume-details"><summary>Громкость и тихий режим</summary><div class="sound-volumes">
-    <NumberSetting value={settings.volume} label="Громкость голоса" type="range" min={0} max={1} step={0.05} save={value => save({ volume: value })}/>
-    <NumberSetting value={settings.sfxVolume} label="Громкость эффектов" type="range" min={0} max={1} step={0.05} save={value => save({ sfxVolume: value })}/>
+  <details class="volume-details"><summary onclick={choiceSound}>Громкость и тихий режим</summary><div class="sound-volumes">
+    <NumberSetting {arrowSound} value={settings.volume} label="Громкость голоса" type="range" min={0} max={1} step={0.05} save={value => save({ volume: value })}/>
+    <NumberSetting {arrowSound} value={settings.sfxVolume} label="Громкость эффектов" type="range" min={0} max={1} step={0.05} save={value => save({ sfxVolume: value })}/>
   </div>
   <label class="check-row"><input type="checkbox" checked={settings.quietMode} onchange={e => { void save({ quietMode: e.currentTarget.checked }).catch(e => error = String(e)); }}/> Тихий режим — отключить голоса и эффекты</label>
   </details>
@@ -81,7 +85,7 @@
   {#if busy}<p class="muted" role="status">Сохранение звука…</p>{/if}
   {#if tab === 'sfx'}
     <p class="muted small-text">{Object.keys(settings.sfxBindings ?? {}).length ? 'Изменения сохраняются автоматически.' : 'Назначений нет — эффекты не воспроизводятся автоматически.'}</p>
-    <details class="binding-details"><summary>Назначения эффектов ({Object.keys(settings.sfxBindings ?? {}).length})</summary>
+    <details class="binding-details"><summary onclick={choiceSound}>Назначения эффектов ({Object.keys(settings.sfxBindings ?? {}).length})</summary>
     <div class="sound-table-wrap"><table class="sound-table" aria-label="Назначения звуковых эффектов"><thead><tr><th>Когда</th><th>Звук</th><th>Проверка</th></tr></thead><tbody>
       {#each soundEvents.filter(event => matches(event.name, settings.sfxBindings?.[event.id] ?? '')) as event (event.id)}
         <tr><td>{event.name}</td><td><select aria-label={`Звук: ${event.name}`} value={settings.sfxBindings?.[event.id] ?? ''} onchange={e => { void bind(event.id, e.currentTarget.value); }}><option value="">Без звука</option>{#each effects as effect}<option value={effect.id}>{effect.name}</option>{/each}</select></td><td><button class="gloss small" disabled={settings.quietMode || !settings.sfxBindings?.[event.id]} aria-label={`Прослушать событие: ${event.name}`} onclick={() => { void play('sfx', settings.sfxBindings[event.id]); }}>▶</button></td></tr>

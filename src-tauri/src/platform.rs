@@ -67,8 +67,61 @@ pub fn own_client(title: &str) -> Result<Value, String> {
         .cloned()
         .ok_or("Окно ещё не отображено compositor".into())
 }
-fn dispatch(name: &str, argument: &str) -> Result<(), String> {
-    let text = hypr(&format!("dispatch {name} {argument}"))?;
+#[derive(Clone, Copy)]
+enum WindowAction {
+    Float,
+    Resize(u32, u32),
+    Move(i32, i32),
+    Raise,
+}
+impl WindowAction {
+    fn command(self, address: &str, pid: u32, lua: bool) -> Result<String, String> {
+        let digits = address.strip_prefix("0x").ok_or("Invalid window address")?;
+        if digits.is_empty() || !digits.bytes().all(|c| c.is_ascii_hexdigit()) {
+            return Err("Invalid window address".into());
+        }
+        if lua {
+            let action = match self {
+                Self::Float => "float({window=w,action=\"enable\"})".into(),
+                Self::Resize(x, y) => format!("resize({{window=w,x={x},y={y},relative=false}})"),
+                Self::Move(x, y) => format!("move({{window=w,x={x},y={y},relative=false}})"),
+                Self::Raise => "alter_zorder({window=w,mode=\"top\"})".into(),
+            };
+            // Resolve once and check ownership inside the compositor, before dispatch.
+            Ok(format!("dispatch function() local w=hl.get_window(\"address:{address}\"); assert(w and w.pid=={pid},\"Owned window unavailable\"); hl.dispatch(hl.dsp.window.{action}) end"))
+        } else {
+            let (name, argument) = match self {
+                Self::Float => ("setfloating", format!("address:{address}")),
+                Self::Resize(x, y) => (
+                    "resizewindowpixel",
+                    format!("exact {x} {y},address:{address}"),
+                ),
+                Self::Move(x, y) => (
+                    "movewindowpixel",
+                    format!("exact {x} {y},address:{address}"),
+                ),
+                Self::Raise => ("alterzorder", format!("top,address:{address}")),
+            };
+            Ok(format!("dispatch {name} {argument}"))
+        }
+    }
+}
+fn dispatch(address: &str, action: WindowAction) -> Result<(), String> {
+    static LUA: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let lua =
+        *LUA.get_or_init(|| hypr("repl return type(hl.dsp)").is_ok_and(|s| s.trim() == "table"));
+    let pid = std::process::id();
+    let command = action.command(address, pid, lua)?;
+    if !lua
+        && !clients()?.as_array().is_some_and(|items| {
+            items.iter().any(|c| {
+                c["address"].as_str() == Some(address) && c["pid"].as_u64() == Some(u64::from(pid))
+            })
+        })
+    {
+        return Err("Собственное окно недоступно".into());
+    }
+    let text = hypr(&command)?;
     if !text.trim().starts_with("ok") {
         return Err(format!("Hyprland: {text}"));
     }
@@ -108,16 +161,13 @@ pub fn prepare(
     let client = own_client(title)?;
     let address = client["address"].as_str().ok_or("No window address")?;
     // This only changes our live window, never a rule or configuration file.
-    dispatch("setfloating", &format!("address:{address}"))?;
+    dispatch(address, WindowAction::Float)?;
     let (w, h) = if label == "companion" {
         (size.0 as i32, size.1 as i32)
     } else {
         (760, 570)
     };
-    dispatch(
-        "resizewindowpixel",
-        &format!("exact {w} {h},address:{address}"),
-    )?;
+    dispatch(address, WindowAction::Resize(w as u32, h as u32))?;
     let monitors: Value = serde_json::from_str(&hypr("j/monitors")?).map_err(|e| e.to_string())?;
     if let Some(monitor) = monitors
         .as_array()
@@ -142,10 +192,7 @@ pub fn prepare(
             x.clamp(mx, (mx + mw - w).max(mx)),
             y.clamp(my + 32, (my + mh - h).max(my + 32)),
         );
-        dispatch(
-            "movewindowpixel",
-            &format!("exact {x} {y},address:{address}"),
-        )?;
+        dispatch(address, WindowAction::Move(x, y))?;
     }
     if label == "companion" {
         if top {
@@ -155,7 +202,7 @@ pub fn prepare(
     Ok(())
 }
 pub fn raise(address: &str) -> Result<(), String> {
-    dispatch("alterzorder", &format!("top,address:{address}"))
+    dispatch(address, WindowAction::Raise)
 }
 
 pub struct DragOrigin {
@@ -190,13 +237,7 @@ pub fn move_drag(drag: &mut DragOrigin) -> Result<(), String> {
         drag.origin.0 + p.0 - drag.cursor.0,
         drag.origin.1 + p.1 - drag.cursor.1,
     );
-    dispatch(
-        "movewindowpixel",
-        &format!(
-            "exact {} {},address:{}",
-            drag.last.0, drag.last.1, drag.address
-        ),
-    )
+    dispatch(&drag.address, WindowAction::Move(drag.last.0, drag.last.1))
 }
 pub fn position(app: &AppHandle) -> Option<(i32, i32)> {
     if is_hyprland() {
@@ -281,15 +322,9 @@ pub fn move_resize(resize: &mut ResizeOrigin) -> Result<(), String> {
 }
 
 fn resize_anchored(address: &str, size: (u32, u32), position: (i32, i32)) -> Result<(), String> {
-    dispatch(
-        "resizewindowpixel",
-        &format!("exact {} {},address:{address}", size.0, size.1),
-    )?;
+    dispatch(address, WindowAction::Resize(size.0, size.1))?;
     // Hyprland's dispatcher resizes around the center; the south-east grip must keep the top-left fixed.
-    dispatch(
-        "movewindowpixel",
-        &format!("exact {} {},address:{address}", position.0, position.1),
-    )
+    dispatch(address, WindowAction::Move(position.0, position.1))
 }
 
 /// Event-driven raise on compositor focus changes, not a polling subprocess.
@@ -337,3 +372,42 @@ pub fn watch_focus(app: AppHandle) {
 }
 #[cfg(not(unix))]
 pub fn watch_focus(_: AppHandle) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn dispatchers_are_addressed_and_lua_checks_the_owning_process() {
+        for action in [
+            WindowAction::Float,
+            WindowAction::Resize(180, 190),
+            WindowAction::Move(-12, 34),
+            WindowAction::Raise,
+        ] {
+            let lua = action.command("0xabCD", 123, true).unwrap();
+            assert!(lua.contains("hl.get_window(\"address:0xabCD\")"));
+            assert!(lua.contains("w.pid==123"));
+            assert!(lua.contains("window=w"));
+            let legacy = action.command("0xabCD", 123, false).unwrap();
+            assert!(legacy.ends_with("address:0xabCD"));
+        }
+        assert!(WindowAction::Move(-12, 34)
+            .command("0x1", 1, true)
+            .unwrap()
+            .contains("x=-12,y=34,relative=false"));
+        assert_eq!(
+            WindowAction::Resize(180, 190)
+                .command("0x1", 1, false)
+                .unwrap(),
+            "dispatch resizewindowpixel exact 180 190,address:0x1"
+        );
+    }
+    #[test]
+    fn malformed_compositor_addresses_cannot_become_lua_or_legacy_commands() {
+        for address in ["", "0x", "activewindow", "0x1\n", "0x1\"); error(1)--"] {
+            for lua in [true, false] {
+                assert!(WindowAction::Raise.command(address, 1, lua).is_err());
+            }
+        }
+    }
+}

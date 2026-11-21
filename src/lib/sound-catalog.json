@@ -14,11 +14,12 @@
     { "id": "main_open", "name": "Открытие главного окна", "context": "any", "intervalMs": 120 },
     { "id": "main_close", "name": "Переход к помощнику", "context": "any", "intervalMs": 120 },
     { "id": "app_quit", "name": "Выход из приложения", "context": "any", "intervalMs": 0 },
-    { "id": "duration_up", "name": "Стрелка увеличения времени", "context": "any", "intervalMs": 0 },
-    { "id": "duration_down", "name": "Стрелка уменьшения времени", "context": "any", "intervalMs": 0 },
+    { "id": "duration_up", "name": "Стрелки: вверх, увеличение, вперёд", "context": "any", "intervalMs": 0 },
+    { "id": "duration_down", "name": "Стрелки: вниз, уменьшение, назад", "context": "any", "intervalMs": 0 },
     { "id": "menu_open", "name": "Нажатие вкладки или открытие меню", "context": "any", "intervalMs": 0 },
+    { "id": "menu_choice", "name": "Нажатие внутренней вкладки", "context": "any", "intervalMs": 0 },
     { "id": "menu_close", "name": "Закрытие меню или настроек", "context": "any", "intervalMs": 120 },
-    { "id": "choice_hover", "name": "Наведение на кнопку", "context": "any", "intervalMs": 120 },
+    { "id": "choice_hover", "name": "Наведение на кнопку", "context": "any", "intervalMs": 0 },
     { "id": "dialogue_continue", "name": "Клик для продолжения диалога", "context": "any", "intervalMs": 80 },
     { "id": "launch", "name": "Приветствие при запуске", "context": "work", "intervalMs": 200 },
     { "id": "start", "name": "Начало работы", "context": "work", "intervalMs": 200 },
@@ -33,5 +34,5 @@
     { "id": "reset", "name": "Сброс таймера", "context": "work", "intervalMs": 200 },
     { "id": "goal", "name": "Дневная цель достигнута", "context": "any", "intervalMs": 1000 }
   ],
-  "defaults": { "app_quit": "game-menu-close", "duration_up": "high", "duration_down": "low", "menu_open": "menu-open", "choice_hover": "menu-hover" }
+  "defaults": { "app_quit": "game-menu-close", "duration_up": "high", "duration_down": "low", "menu_open": "menu-open", "choice_hover": "menu-hover", "menu_choice": "choice-hover" }
 }

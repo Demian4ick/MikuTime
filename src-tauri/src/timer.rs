@@ -18,6 +18,13 @@ pub enum Phase {
     LongBreak,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum BackgroundMode {
+    #[default]
+    Companion,
+    Panel,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -32,6 +39,7 @@ pub struct Settings {
     pub talkativeness: String,
     pub daily_goal_minutes: u32,
     pub always_on_top: bool,
+    pub background_mode: BackgroundMode,
     pub companion_position: Option<(i32, i32)>,
     pub companion_size: Option<(u32, u32)>,
     pub background: Option<String>,
@@ -57,6 +65,7 @@ impl Default for Settings {
             talkativeness: "Balanced".into(),
             daily_goal_minutes: 120,
             always_on_top: true,
+            background_mode: BackgroundMode::Companion,
             companion_position: None,
             companion_size: None,
             background: None,
@@ -65,17 +74,26 @@ impl Default for Settings {
             sfx: BTreeMap::new(),
             sfx_bindings: crate::audio::default_bindings(),
             sfx_volume: 0.5,
-            sound_defaults_version: 1,
+            sound_defaults_version: 2,
         }
     }
 }
 impl Settings {
     pub fn migrate_sound_defaults(&mut self) {
-        if self.sound_defaults_version == 0 {
-            // Apply the user's newly approved five assignments once; unrelated bindings stay intact.
-            self.sfx_bindings.extend(crate::audio::default_bindings());
-            self.sound_defaults_version = 1;
+        if self.sound_defaults_version >= 2 {
+            return;
         }
+        let defaults = crate::audio::default_bindings();
+        if self.sound_defaults_version == 0 {
+            // Original opt-in assignments plus the newly approved inner-menu click.
+            self.sfx_bindings.extend(defaults);
+        } else if let Some(sound) = defaults.get("menu_choice") {
+            // Do not re-enable any sounds the user has already disabled in 0.1.6/0.1.7.
+            self.sfx_bindings
+                .entry("menu_choice".into())
+                .or_insert_with(|| sound.clone());
+        }
+        self.sound_defaults_version = 2;
     }
     pub fn validate(&self) -> Result<(), String> {
         if !(1..=480).contains(&self.focus_minutes)
@@ -153,9 +171,10 @@ pub struct SettingsPatch {
     pub talkativeness: Option<String>,
     pub daily_goal_minutes: Option<u32>,
     pub always_on_top: Option<bool>,
+    pub background_mode: Option<BackgroundMode>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Category {
     pub id: String,
@@ -163,7 +182,7 @@ pub struct Category {
     pub color: String,
     pub archived: bool,
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Segment {
     pub start_ms: i64,
@@ -174,7 +193,7 @@ impl Segment {
         (self.end_ms - self.start_ms).max(0)
     }
 }
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Session {
     pub id: String,
@@ -276,7 +295,8 @@ impl Database {
             quiet_mode,
             talkativeness,
             daily_goal_minutes,
-            always_on_top
+            always_on_top,
+            background_mode
         );
         settings.validate()?;
         let minutes = settings.focus_minutes;
@@ -479,6 +499,11 @@ impl Database {
                 }
                 Some("break_skipped")
             }
+            "reset_cycle" => {
+                // Only the long-break cadence changes; active work/rest and history stay intact.
+                self.timer.cycle = 0;
+                None
+            }
             "reset" => {
                 self.close_segment(now);
                 self.save_session(now, false);
@@ -587,10 +612,61 @@ mod tests {
     #[test]
     fn reset_preserves_actual_work_as_partial_record() {
         let mut d = db();
+        d.timer.cycle = 1;
         d.action("start", 1000).unwrap();
         d.action("reset", 11000).unwrap();
         assert_eq!(d.sessions[0].work_ms(), 10000);
         assert!(!d.sessions[0].completed);
+        assert_eq!(d.timer.cycle, 1);
+    }
+    #[test]
+    fn cycle_reset_only_changes_the_counter_in_every_timer_state() {
+        let mut d = db();
+        for action in ["reset_cycle", "start", "pause", "resume", "finish", "skip"] {
+            d.action(action, 1000).unwrap();
+            d.timer.cycle = 2;
+            let mut expected = serde_json::to_value(&d).unwrap();
+            expected["timer"]["cycle"] = 0.into();
+            assert_eq!(d.action("reset_cycle", 1000).unwrap(), None);
+            assert_eq!(serde_json::to_value(&d).unwrap(), expected);
+        }
+        d.action("start", 2000).unwrap();
+        d.timer.cycle = 3;
+        assert_eq!(
+            d.action("reset_cycle", 999999).unwrap(),
+            Some("focus_complete")
+        );
+        assert_eq!(d.timer.status, Status::AwaitingDecision);
+        assert_eq!(d.timer.session.as_ref().unwrap().work_ms(), 60000);
+        let before = serde_json::to_value(&d).unwrap();
+        d.action("reset_cycle", 1000000).unwrap();
+        assert_eq!(serde_json::to_value(&d).unwrap(), before);
+        d.settings.sessions_before_long = 1;
+        d.action("finish", 1000001).unwrap();
+        assert_eq!(d.timer.phase, Phase::LongBreak);
+        let mut expected = serde_json::to_value(&d).unwrap();
+        expected["timer"]["cycle"] = 0.into();
+        d.action("reset_cycle", 1000002).unwrap();
+        assert_eq!(serde_json::to_value(&d).unwrap(), expected);
+    }
+    #[test]
+    fn cycle_reset_restarts_long_break_cadence_and_survives_serialization() {
+        let mut d = db();
+        d.settings.sessions_before_long = 2;
+        d.action("start", 0).unwrap();
+        d.action("finish", 1000).unwrap();
+        d.action("skip", 2000).unwrap();
+        assert_eq!(d.timer.cycle, 1);
+        d.action("reset_cycle", 3000).unwrap();
+        let mut d: Database = serde_json::from_value(serde_json::to_value(d).unwrap()).unwrap();
+        assert_eq!(d.timer.cycle, 0);
+        for (start, phase) in [(4000, Phase::ShortBreak), (8000, Phase::LongBreak)] {
+            d.action("start", start).unwrap();
+            d.action("finish", start + 1000).unwrap();
+            assert_eq!(d.timer.phase, phase);
+            d.action("skip", start + 2000).unwrap();
+        }
+        assert_eq!(d.sessions.len(), 3);
     }
     #[test]
     fn long_break_cycle_and_break_accounting() {

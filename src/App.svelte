@@ -3,17 +3,19 @@
   import { invoke, convertFileSrc } from '@tauri-apps/api/core';
   import { listen } from '@tauri-apps/api/event';
   import { getCurrentWindow } from '@tauri-apps/api/window';
-  import type { Snapshot, SettingsPatch, Category, Emotion, DialogueFile } from './lib/types';
+  import type { Snapshot, SettingsPatch, Category, Emotion, DialogueFile, ObsidianExportStatus } from './lib/types';
   import { AutoSaver, type SaveStatus } from './lib/autosave';
   import { EmotionManager } from './lib/emotions';
   import { emotionNames } from './lib/localization';
   import { ReactionController } from './lib/reactions';
+  import { loadVoiceSource } from './lib/voice';
   import type { VisualState } from './lib/reactions';
   import { validateDialogues } from './lib/dialogues';
   import { SfxManager, SoundPreview, type SoundKind } from './lib/sounds';
-  import { hoverButton, closePresentation, exitFadeMs, exitAudioLimitMs } from './lib/interaction';
+  import { hoverButton, closePresentation, exitFadeMs, exitAudioLimitMs, type ArrowDirection } from './lib/interaction';
   import { StatisticsService, formatDuration, formatTimer, dayKey } from './lib/statistics';
   import TimerControls from './components/TimerControls.svelte';
+  import CategoryPicker from './components/CategoryPicker.svelte';
   import Diary from './components/Diary.svelte';
   import Settings from './components/Settings.svelte';
   import DialoguePanel from './components/DialoguePanel.svelte';
@@ -24,7 +26,7 @@
   let page = $state<'focus' | 'diary' | 'settings'>('focus');
   let toast = $state(''); let fatal = $state('');
   let context = $state(false);
-  let visual = $state<VisualState>({ emotion: 'Neutral', ru: 'Я рядом, сэмпай. Всё получится~ ♡', en: "I'm here with you, Senpai.", speaking: false, typing: false, awaitingInput: false });
+  let visual = $state<VisualState>({ emotion: 'Neutral', ru: 'Я рядом. Всё получится~ ♡', en: "I'm here with you.", speaking: false, typing: false, awaitingInput: false });
   let previousSprite = $state(''); let transition = $state(false);
   let sprite = $derived(companion ? '/companion/SmartyMiku.png' : snapshot ? EmotionManager.path(visual.emotion, snapshot.settings, convertFileSrc) : '/sprites/Neutral.png');
   let background = $derived(snapshot?.settings.background ? convertFileSrc(snapshot.settings.background) : '/background.jpg');
@@ -63,6 +65,7 @@
   function windowAction(action: string) {
     void (async () => {
       await soundWrites;
+      if (action === 'background') await settingsSaver.flush();
       if (action === 'quit') await Promise.all([settingsSaver.flush(), durationWrites, resizeReady, ...[...categorySavers.values()].map(saver => saver.flush())]);
       await call('window_action', { action });
     })().catch(() => {});
@@ -77,13 +80,13 @@
     visual = value;
   }
   function syncController() {
-    if (!snapshot || snapshot.activeWindow !== label || !dialogueData || closing) { controller?.dispose(); controller = null; return; }
-    const restoreDecision = !controller && snapshot.timer.status === 'AwaitingDecision' && snapshot.timer.phase === 'Focus';
-    if (!controller) controller = new ReactionController(dialogueData, () => snapshot!.settings, convertFileSrc, setVisual, notify);
+    if (!snapshot || snapshot.activeWindow !== label || document.hidden || !dialogueData || closing) { controller?.dispose(); controller = null; return; }
+    const restoreDecision = !companion && !controller && snapshot.timer.status === 'AwaitingDecision' && snapshot.timer.phase === 'Focus';
+    if (!controller) controller = new ReactionController(dialogueData, () => snapshot!.settings, (path, signal) => loadVoiceSource(path, convertFileSrc, signal), setVisual, notify, { completionQuestion: !companion });
     controller.setContext(snapshot.timer.phase !== 'Focus');
     controller.setDecision(snapshot.timer.status === 'AwaitingDecision');
     controller.configure();
-    // The companion may already have claimed the event; restore from the Rust decision state.
+    // The companion claims completion for its SFX only; the question belongs to the visible main window.
     if (restoreDecision) controller.event('focus_complete');
     for (const event of snapshot.reactions) {
       void invoke<boolean>('claim_reaction', { id: event.id }).then(claimed => {
@@ -101,7 +104,7 @@
     if (value.activeWindow !== label) { stopPreview(); effects.stop(); }
     else if (previous && previous.activeWindow !== label) {
       // Play in the newly active WebView: the old one is already hidden.
-      playEffect(companion ? 'main_close' : 'main_open');
+      if (!value.quitting) playEffect(companion ? 'main_close' : 'main_open');
       if (!companion && value.timer.status === 'AwaitingDecision') page = 'focus';
     }
     if (previous && previous.timer.phase !== value.timer.phase) stopPreview();
@@ -123,7 +126,11 @@
   function hover(event: PointerEvent) {
     if (event.target instanceof Element && hoverButton(event.target, event.relatedTarget instanceof Node ? event.relatedTarget : null)) playEffect('choice_hover');
   }
-  function visibilityChanged() { if (document.hidden && !closing) { stopPreview(); effects.stop(); controller?.silence(); } }
+  function visibilityChanged() {
+    if (closing) return;
+    if (document.hidden) { stopPreview(); effects.stop(); }
+    syncController();
+  }
   async function presentQuit() {
     if (closing) return;
     closing = true; context = false; dialogueEditor = false;
@@ -144,11 +151,13 @@
     }
   }
   function save(patch: SettingsPatch) { return settingsSaver.save(patch); }
+  function arrowSound(direction: ArrowDirection) { playEffect(direction > 0 ? 'duration_up' : 'duration_down'); }
+  function choiceSound() { playEffect('menu_choice'); }
   function adjustFocusDuration(delta: -1 | 1) {
     // Every click is a relative Rust operation; fast clicks must not reuse a stale snapshot.
     const request = durationWrites.catch(() => {}).then(() => settingsSaver.flush()).then(async () => {
       await call<void>('adjust_focus_minutes', { delta });
-      playEffect(delta > 0 ? 'duration_up' : 'duration_down');
+      arrowSound(delta);
     });
     durationWrites = request;
     return request;
@@ -190,6 +199,11 @@
     } catch (e) { notify(String(e)); throw e; }
   }
   async function exportData(format: string) { try { notify(`Экспорт сохранён: ${await call<string>('export_data', { format })}`); } catch {} }
+  async function chooseObsidian() {
+    if (await call<boolean>('choose_obsidian_folder')) notify('Автовыгрузка подключена. Файл обновляется автоматически.');
+  }
+  async function disconnectObsidian() { await call('disconnect_obsidian'); notify('Автовыгрузка отключена. Созданные файлы сохранены.'); }
+  async function refreshObsidian() { await call('refresh_obsidian'); }
   async function editDialogues() {
     try { dialogueText = JSON.stringify(await call('get_dialogues'), null, 2); dialogueEditor = true; } catch {}
   }
@@ -263,7 +277,7 @@
     const delta: Record<string, [number, number]> = { ArrowLeft: [-10, 0], ArrowRight: [10, 0], ArrowUp: [0, -10], ArrowDown: [0, 10] };
     const step = delta[event.key]; if (!step) return;
     event.preventDefault(); event.stopPropagation();
-    void call('adjust_companion_size', { deltaWidth: step[0], deltaHeight: step[1] }).catch(() => {});
+    void call('adjust_companion_size', { deltaWidth: step[0], deltaHeight: step[1] }).then(() => arrowSound(event.key === 'ArrowUp' || event.key === 'ArrowRight' ? 1 : -1)).catch(() => {});
   }
 
   onMount(() => {
@@ -272,6 +286,19 @@
       try {
         const unstate = await listen<Snapshot>('state', e => { if (!disposed) update(e.payload); });
         if (disposed) { unstate(); return; } unlisteners.push(unstate);
+        const unexport = await listen<ObsidianExportStatus>('obsidian-export', e => {
+          if (disposed || !snapshot) return;
+          const previousError = snapshot.obsidian.error;
+          snapshot = { ...snapshot, obsidian: e.payload };
+          if (e.payload.error && e.payload.error !== previousError && snapshot.activeWindow === label) notify(e.payload.error);
+        });
+        if (disposed) { unexport(); return; } unlisteners.push(unexport);
+        const unpanel = await listen<string | null>('panel-error', e => {
+          if (disposed || !snapshot) return;
+          snapshot = { ...snapshot, panel: { ...snapshot.panel, error: e.payload } };
+          if (e.payload && snapshot.activeWindow === label) notify(e.payload);
+        });
+        if (disposed) { unpanel(); return; } unlisteners.push(unpanel);
         const unclock = await listen<{ now: number; remainingMs: number; timer: Snapshot['timer'] }>('clock', e => {
           if (!snapshot || disposed || snapshot.activeWindow !== label) return;
           snapshot = { ...snapshot, ...e.payload };
@@ -309,19 +336,19 @@
   </main>
 {:else}
   <main class="app-shell" inert={closing}>
-    <header class="app-header"><a class="brand" href="#focus" onclick={() => navigate('focus')}><span class="brand-flower">✿</span><span>Miku <b>Focus</b></span></a><div class="header-actions"><button class="header-button" class:muted={snapshot?.settings.quietMode} title="Тихий режим" aria-label="Переключить тихий режим" onclick={() => { if (snapshot) void save({ quietMode: !snapshot.settings.quietMode }).catch(() => {}); }}>{snapshot?.settings.quietMode ? '♪̸' : '♫'}</button><button class="gloss small" onclick={() => windowAction('companion')}>Помощник <span>↗</span></button><button class="header-button" aria-label="Сохранить и выйти" title="Сохранить и выйти" onclick={() => windowAction('quit')}>⏻</button></div></header>
+    <header class="app-header"><a class="brand" href="#focus" onclick={() => navigate('focus')}><span class="brand-flower">✿</span><span>Miku <b>Focus</b></span></a><div class="header-actions"><button class="header-button" class:muted={snapshot?.settings.quietMode} title="Тихий режим" aria-label="Переключить тихий режим" onclick={() => { if (snapshot) void save({ quietMode: !snapshot.settings.quietMode }).catch(() => {}); }}>{snapshot?.settings.quietMode ? '♪̸' : '♫'}</button><button class="gloss small" onclick={() => windowAction('background')}>{snapshot?.settings.backgroundMode === 'Panel' ? 'Свернуть в панель' : 'Помощник'} <span>↗</span></button><button class="header-button" aria-label="Сохранить и выйти" title="Сохранить и выйти" onclick={() => windowAction('quit')}>⏻</button></div></header>
     <nav class="main-tabs"><button class:active={page === 'focus'} onclick={() => navigate('focus')}>♡ Комната фокуса</button><button class:active={page === 'diary'} onclick={() => navigate('diary')}>✧ Дневник занятий</button><button class:active={page === 'settings'} onclick={() => navigate('settings')}>Настройки</button><span class="nav-date">{new Date(snapshot?.now ?? Date.now()).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}</span></nav>
     {#if fatal}<section class="fatal-error"><h2>Не удалось открыть локальные данные</h2><p>{fatal}</p><p>Файлы не удалены. Для запуска используйте <code>npm run tauri dev</code>, не браузер.</p></section>
     {:else if !snapshot}<div class="loading">Мику уже идёт… ♡</div>
-    {:else if page === 'diary' && isActive}<Diary {snapshot} {exportData}/>
-    {:else if page === 'settings' && isActive}<Settings {snapshot} {save} status={saveStatus} {categorySave} {upload} resetArt={() => { void call('reset_art').catch(() => {}); }} {editDialogues} {bindSfx} {clearSound} {preview} {stopPreview}/>
+    {:else if page === 'diary' && isActive}<Diary {snapshot} {exportData} {arrowSound} {choiceSound}/>
+    {:else if page === 'settings' && isActive}<Settings {snapshot} {save} status={saveStatus} {categorySave} {upload} resetArt={() => { void call('reset_art').catch(() => {}); }} {editDialogues} {bindSfx} {clearSound} {preview} {stopPreview} {arrowSound} {choiceSound} {chooseObsidian} {disconnectObsidian} {refreshObsidian}/>
     {:else if page === 'focus'}
       <section class="focus-scene" style:background-image={`linear-gradient(90deg,rgba(224,255,247,.18),rgba(243,255,251,.12) 62%,rgba(236,255,249,.85)),url("${background}")`}>
         <div class="scene-decoration heart-one">♡</div><div class="scene-decoration heart-two">✧</div>
         <button class="main-character" data-hover-exclude onclick={() => requestReaction('touch')} aria-label="Поговорить с Мику">
           {#if transition}<img class="sprite-old" src={previousSprite} alt="" draggable="false"/>{/if}<img class="sprite-current" src={sprite} alt={`Мику: ${emotionNames[visual.emotion]}`} draggable="false"/>
         </button>
-        <div class="focus-sidebar"><label class="category-picker"><span>Категория</span><select value={snapshot.selectedCategory} onchange={e => { void call('select_category', { id: e.currentTarget.value }).catch(() => {}); }}>{#each snapshot.categories.filter(c => !c.archived) as category}<option value={category.id}>{category.name}</option>{/each}</select></label><TimerControls {snapshot} {act} {adjustFocusDuration}/><div class="today-mini">Сегодня <strong>{formatDuration(new StatisticsService(snapshot).get(dayKey(snapshot.now)).workMs)}</strong></div></div>
+        <div class="focus-sidebar"><CategoryPicker categories={snapshot.categories} value={snapshot.selectedCategory} select={id => { void call('select_category', { id }).catch(() => {}); }} {choiceSound}/><TimerControls {snapshot} {act} {adjustFocusDuration}/><div class="today-mini">Сегодня <strong>{formatDuration(new StatisticsService(snapshot).get(dayKey(snapshot.now)).workMs)}</strong></div></div>
       </section>
       <DialoguePanel {visual} advance={advanceDialogue} skip={() => controller?.skip()}/>
     {/if}

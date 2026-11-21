@@ -5,6 +5,28 @@ export function hoverButton(target: Element, related: Node | null): Element | nu
   return button;
 }
 
+export type ArrowDirection = -1 | 1;
+
+/** Identify native spinner/keyboard steps, without beeping for typing, paste or slider drags. */
+export class ArrowStepInput {
+  private pointer = false;
+  private keyboard = false;
+  pointerDown(button: number, type: 'number' | 'range'): void {
+    this.pointer = button === 0 && type === 'number'; this.keyboard = false;
+  }
+  pointerEnd(): void { this.pointer = false; }
+  keyDown(key: string, type: 'number' | 'range'): void {
+    this.pointer = false;
+    this.keyboard = ['ArrowUp', 'ArrowDown', ...(type === 'range' ? ['ArrowLeft', 'ArrowRight'] : [])].includes(key);
+  }
+  keyUp(): void { this.keyboard = false; }
+  reset(): void { this.pointer = false; this.keyboard = false; }
+  direction(previous: number | undefined, next: number | undefined): ArrowDirection | null {
+    if ((!this.pointer && !this.keyboard) || previous === undefined || next === undefined || !Number.isFinite(previous) || !Number.isFinite(next) || previous === next) return null;
+    return next > previous ? 1 : -1;
+  }
+}
+
 export const exitFadeMs = 1500;
 export const exitAudioLimitMs = 3500;
 
