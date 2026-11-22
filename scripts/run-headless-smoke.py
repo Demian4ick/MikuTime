@@ -14,6 +14,8 @@ parser.add_argument('--debug', action='store_true')
 parser.add_argument('--quick', action='store_true', help='Skip real one-minute focus/rest waits during test development')
 parser.add_argument('--obsidian-only', action='store_true', help='Check only the native export-folder connection')
 parser.add_argument('--panel-only', action='store_true', help='Check panel mode and the native CLI')
+parser.add_argument('--quit-only', choices=['main', 'companion'])
+parser.add_argument('--quiet-exit', action='store_true')
 args = parser.parse_args()
 profile = 'debug' if args.debug else 'release'
 if os.environ.get('MIKU_PRIVATE_SMOKE') != '1':
@@ -95,6 +97,8 @@ with (data / 'desktop.log').open('w') as log:
         if not args.quick: command.append('--full')
         if args.obsidian_only: command.append('--obsidian-only')
         if args.panel_only: command.append('--panel-only')
+        if args.quit_only: command.extend(['--quit-only', args.quit_only])
+        if args.quiet_exit: command.append('--quiet-exit')
         subprocess.run(command, cwd=root, check=True, timeout=300 if not args.quick else 180)
         code = app.wait(timeout=15)
         print(f'isolated {profile} exit code', code, flush=True)

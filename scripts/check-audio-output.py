@@ -19,8 +19,18 @@ p.add_argument('--debug', action='store_true')
 p.add_argument('--binary', type=Path, help='Existing owned baseline binary; still uses private app-data and sink')
 p.add_argument('--decision', action='store_true', help='Use a private waiting-decision checkpoint and a supplied UI WAV as a voice probe, not real character speech')
 p.add_argument('--panel', action='store_true', help='With --decision, check fully hidden panel mode instead of the companion')
+p.add_argument('--quit', action='store_true', help='Check concurrent farewell, fade and exit SFX with a clean process exit')
+p.add_argument('--quiet-exit', action='store_true', help='With --quit, require silence during farewell and fade')
+p.add_argument('--farewell-wav', type=Path, help='With --quit, compare a supplied goodbye WAV preview and full voiced exit')
+p.add_argument('--quit-companion', action='store_true', help='With --quit, exit through the owned companion menu')
+p.add_argument('--quit-voice-only', action='store_true', help='With --farewell-wav, mute only the close SFX to measure the complete voice during fade')
 args = p.parse_args()
 if args.panel and not args.decision: p.error('--panel requires --decision')
+if args.quit and args.decision: p.error('--quit and --decision are separate scenarios')
+if args.quiet_exit and not args.quit: p.error('--quiet-exit requires --quit')
+if args.farewell_wav and not args.quit: p.error('--farewell-wav requires --quit')
+if args.quit_companion and not args.quit: p.error('--quit-companion requires --quit')
+if args.quit_voice_only and not args.farewell_wav: p.error('--quit-voice-only requires --farewell-wav')
 root = Path(__file__).resolve().parent.parent
 binary = args.binary.resolve() if args.binary else root / f'src-tauri/target/{"debug" if args.debug else "release"}/miku-focus'
 base = root / '.local-test' / f'audio-output-{time.time_ns()}'
@@ -29,7 +39,13 @@ data = base / 'data/dev.mikufocus.desktop'
 seed_silent_data(data)
 state_path = data / 'state.json'
 state = json.loads(state_path.read_text())
-state['settings'].update(sfxVolume=0.5, volume=0.5, quietMode=False)
+state['settings'].update(sfxVolume=0.5, volume=0.5, quietMode=args.quiet_exit)
+if args.farewell_wav:
+    asset = data / 'assets/voices/goodbye.wav'
+    asset.parent.mkdir(parents=True, exist_ok=True)
+    asset.write_bytes(args.farewell_wav.resolve().read_bytes())
+    state['settings'].update(voices={'goodbye': str(asset)}, sfxBindings={'app_quit': 'game-menu-close'}, soundDefaultsVersion=2)
+    if args.quit_voice_only: state['settings']['sfxBindings'] = {}
 if args.decision:
     asset = data / 'assets/voices/question.wav'
     asset.parent.mkdir(parents=True)
@@ -95,10 +111,11 @@ def capture(name, action):
             assert recorder.poll() is None, 'Recorder exited before connecting'
             time.sleep(.05)
         else: raise RuntimeError('Owned null-monitor recorder did not deliver PCM')
+        action_sample = raw.stat().st_size // 2
         action()
         # Cold opening from a fully unmapped panel can take longer than reopening
         # an already mapped companion. Keep recording through that transition.
-        time.sleep(3 if args.panel else 1)
+        time.sleep(5 if args.quit else 3 if args.panel else 1)
         recorder.terminate(); recorder.wait(timeout=10); recorder = None
     pcm = raw.read_bytes()
     with wave.open(str(path), 'wb') as audio:
@@ -106,6 +123,10 @@ def capture(name, action):
     samples = array('h', pcm)
     energy = sum(x*x for x in samples)
     result = {'peak': max(map(abs, samples), default=0), 'rms': math.sqrt(energy / max(1, len(samples))), 'energy': energy, 'samples': len(samples), 'nonzero': sum(x != 0 for x in samples)}
+    if args.quit:
+        result['farewellEnergy'] = sum(x*x for x in samples[action_sample:action_sample + int(1.3 * 48000)])
+        audible = [i for i in range(action_sample, len(samples)) if abs(samples[i]) > 16]
+        result['lastSoundMs'] = (audible[-1] - action_sample) * 1000 / 48000 if audible else None
     results[name] = result
     (base / f'{name}-ui.txt').write_text(visible_text(accessible))
     print(name, json.dumps(result), flush=True)
@@ -125,7 +146,42 @@ with (base / 'desktop.log').open('w') as log:
             time.sleep(.1)
         else: raise RuntimeError('Owned app not found on AT-SPI')
         time.sleep(1)
-        if args.decision:
+        if args.quit:
+            if args.farewell_wav and not args.quiet_exit:
+                click('Настройки'); click('Звуки')
+                capture('exit-sfx-preview', lambda: click('Прослушать UI SFX_InGameMenu_Close.ogg'))
+                click('Голоса (21)')
+                capture('goodbye-preview', lambda: click('Прослушать голос goodbye'))
+                click('♡ Комната фокуса')
+            if args.quit_companion:
+                from hypr_smoke import dispatch
+                click('Помощник ↗')
+                clients = json.loads(subprocess.check_output(['hyprctl', '-j', 'clients']))
+                companion = next(c for c in clients if c['pid'] == app.pid and c['title'] == 'Miku Focus — помощник')
+                dispatch(app.pid, companion['address'], 'focus')
+                control = find(accessible, 'Мику: клик — открыть, перетаскивание — переместить')
+                assert control is not None and control.get_component_iface().grab_focus()
+                dispatch(app.pid, companion['address'], 'shortcut', '', 'Menu')
+                time.sleep(.2)
+            capture('quit', lambda: click('Сохранить и выйти'))
+            if args.farewell_wav and not args.quiet_exit:
+                assert results['quit']['farewellEnergy'] > 0, 'Goodbye voice did not play in the farewell phase'
+                if args.quit_voice_only:
+                    reference = results['goodbye-preview']['energy']
+                    assert .95 < results['quit']['energy'] / reference < 1.05, 'Goodbye voice was truncated or changed volume during fade'
+                # Simultaneous signals interfere: their mixed PCM energy is not
+                # the sum of the separate preview energies. Measure voice alone
+                # with --quit-voice-only instead of asserting that false equality.
+            elif not args.quiet_exit:
+                assert results['quit']['farewellEnergy'] > 0, 'Close SFX did not start during the fade'
+            if args.quiet_exit: assert results['quit']['energy'] == 0, 'Quiet exit leaked audio'
+            else:
+                assert results['quit']['peak'] > 100 and results['quit']['nonzero'] > 100, 'Exit audio did not play during the fade'
+                assert results['quit']['lastSoundMs'] < 3300, 'Exit audio is still sequential instead of concurrent with the farewell'
+            assert app.wait(timeout=8) == 0, 'Owned app did not exit normally'
+            current = json.loads(state_path.read_text())
+            assert not current['sessions'] and current['timer']['status'] == 'Idle', 'Exit changed timer/history'
+        elif args.decision:
             background = 'panel' if args.panel else 'companion'
             def open_main():
                 if args.panel: subprocess.run([str(binary), '--show-main'], env=env, check=True, timeout=8)
@@ -172,7 +228,7 @@ with (base / 'desktop.log').open('w') as log:
             reference = results['html-short-high-first']['energy']
             assert all(.95 < energy / reference < 1.05 for energy in energies), 'Interface volume differs from preview at the same saved volume'
         passed = True
-        print('Main-only decision voice passed' if args.decision else 'Both playback paths produced PCM; repeated short effects kept their level; Quiet Mode was silent', flush=True)
+        print('Farewell/exit audio passed' if args.quit else 'Main-only decision voice passed' if args.decision else 'Both playback paths produced PCM; repeated short effects kept their level; Quiet Mode was silent', flush=True)
     finally:
         for process in [recorder, app]:
             if process is not None and process.poll() is None:
@@ -181,4 +237,4 @@ with (base / 'desktop.log').open('w') as log:
                 except subprocess.TimeoutExpired: process.kill(); process.wait()
         subprocess.run(['pactl', 'unload-module', module], check=True)
         assert subprocess.check_output(['pactl', 'get-default-sink'], text=True).strip() == default_sink, 'Default output unexpectedly changed'
-        (base / 'summary.json').write_text(json.dumps({'passed': passed, 'mode': 'decision-panel' if args.panel else 'decision' if args.decision else 'effects', 'binary': str(binary), 'sha256': hashlib.sha256(binary.read_bytes()).hexdigest(), 'pid': app.pid if app else None, 'defaultSinkUnchanged': True, 'privateModuleUnloaded': True}, indent=2))
+        (base / 'summary.json').write_text(json.dumps({'passed': passed, 'mode': 'quit-companion-quiet' if args.quit_companion and args.quiet_exit else 'quit-companion' if args.quit_companion else 'quit-quiet' if args.quiet_exit else 'quit' if args.quit else 'decision-panel' if args.panel else 'decision' if args.decision else 'effects', 'voiceOnly': args.quit_voice_only, 'binary': str(binary), 'sha256': hashlib.sha256(binary.read_bytes()).hexdigest(), 'pid': app.pid if app else None, 'defaultSinkUnchanged': True, 'privateModuleUnloaded': True}, indent=2))

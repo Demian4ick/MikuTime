@@ -64,12 +64,27 @@ test('editable dialogue manifest and required first-extension sequence', () => {
   assert.equal(first.lines[1].ru, 'Хе-хе! Ты такой старательный. Я горжусь тобой~ ♡');
   assert.throws(() => validateDialogues({ version: 2 }));
 });
-test('Senpai is reserved for six occasional lines and Russian addresses match the English scripts', () => {
+test('Senpai stays selective; the requested English finish address does not change Russian subtitles', () => {
   const data = validateDialogues(JSON.parse(readFileSync(new URL('../public/dialogues.json', import.meta.url), 'utf8')));
   const lines = data.dialogues.flatMap(dialogue => dialogue.lines);
   const addressed = ['extra_surprised', 'focus_complete', 'goal', 'record', 'return', 'welcome'];
-  assert.equal(data.dialogues.length, 19); assert.equal(lines.length, 20);
-  assert.deepEqual(lines.filter(line => /Senpai/.test(line.en)).map(line => line.voice).sort(), addressed);
+  assert.equal(data.dialogues.length, 20); assert.equal(lines.length, 21);
+  assert.deepEqual(lines.filter(line => /Senpai/.test(line.en)).map(line => line.voice).sort(), ['finish', ...addressed].sort());
   assert.deepEqual(lines.filter(line => /сэмпай/i.test(line.ru)).map(line => line.voice).sort(), addressed);
-  assert.equal(new Set(lines.map(line => line.voice)).size, 20);
+  assert.equal(new Set(lines.map(line => line.voice)).size, 21);
+});
+test('the seven revised English scripts match the requested wording exactly', () => {
+  const data = validateDialogues(JSON.parse(readFileSync(new URL('../public/dialogues.json', import.meta.url), 'utf8')));
+  const expected: Record<string, string> = {
+    welcome: "Welcome back, Senpai! Let's make some time for your dreams!",
+    start: "One little step at a time. I'm right here with you!",
+    extension: "Five more minutes? Hehe, I'm cheering for you!",
+    finish: "Great work, Senpai! Now relax your shoulders, have some water, and get some rest. I'm right here with you!",
+    'break-skipped': "Done resting already? Okay, but don't push yourself too hard. I'm here for you!",
+    goal: "You reached today's goal! I'm so proud of you, Senpai!",
+    touch: "Hmm? Looking at me instead of working? Just kidding!",
+  };
+  for (const [id, en] of Object.entries(expected)) {
+    assert.equal(data.dialogues.find(dialogue => dialogue.id === id)?.lines[0].en, en, id);
+  }
 });

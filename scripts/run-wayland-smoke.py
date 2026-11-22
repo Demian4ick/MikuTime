@@ -15,6 +15,8 @@ p = argparse.ArgumentParser()
 p.add_argument('--debug', action='store_true')
 p.add_argument('--full', action='store_true')
 p.add_argument('--panel-only', action='store_true')
+p.add_argument('--quit-only', choices=['main', 'companion'])
+p.add_argument('--quiet-exit', action='store_true')
 p.add_argument('--pointer-helper', type=Path)
 args = p.parse_args()
 if not os.environ.get('WAYLAND_DISPLAY') or not os.environ.get('HYPRLAND_INSTANCE_SIGNATURE'):
@@ -40,6 +42,8 @@ with (base / 'desktop.log').open('w') as log:
         command = [sys.executable, str(root / 'scripts/desktop-smoke.py'), '--pid', str(app.pid), '--data', str(base / 'data/dev.mikufocus.desktop')]
         if args.full: command.append('--full')
         if args.panel_only: command.append('--panel-only')
+        if args.quit_only: command.extend(['--quit-only', args.quit_only])
+        if args.quiet_exit: command.append('--quiet-exit')
         if args.pointer_helper: command.extend(['--pointer-helper', str(args.pointer_helper.resolve())])
         subprocess.run(command, cwd=root, check=True, timeout=300 if args.full else 150)
         code = app.wait(timeout=15)

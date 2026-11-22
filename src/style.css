@@ -86,7 +86,7 @@
 .inactive{visibility:hidden}
 button:not(:disabled):not([data-hover-exclude]):not([data-hover-exclude] button):hover{filter:brightness(1.08);box-shadow:inset 0 0 0 999px #3dbb9512,0 0 0 2px #3baf9870}
 .shutdown-curtain{position:fixed;inset:0;z-index:10000;background:#000;opacity:0;cursor:wait;pointer-events:all}
-.app-shell[inert] .scroll-area,.app-shell[inert] .focus-sidebar{overflow:hidden}
+.app-shell.closing .scroll-area,.app-shell.closing .focus-sidebar{overflow:hidden}
 .shutdown-curtain.fading{opacity:1;animation:shutdown-black var(--exit-fade,1500ms) ease-in forwards}
 @keyframes shutdown-black{from{opacity:0}to{opacity:1}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important}}

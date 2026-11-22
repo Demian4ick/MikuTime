@@ -8,11 +8,11 @@
   import { EmotionManager } from './lib/emotions';
   import { emotionNames } from './lib/localization';
   import { ReactionController } from './lib/reactions';
-  import { loadVoiceSource } from './lib/voice';
+  import { loadVoiceSource, VoiceManager } from './lib/voice';
   import type { VisualState } from './lib/reactions';
   import { validateDialogues } from './lib/dialogues';
   import { SfxManager, SoundPreview, type SoundKind } from './lib/sounds';
-  import { hoverButton, closePresentation, exitFadeMs, exitAudioLimitMs, type ArrowDirection } from './lib/interaction';
+  import { hoverButton, closePresentation, exitFadeMs, exitAudioLimitMs, farewellLine, farewellPresentation, type ArrowDirection } from './lib/interaction';
   import { StatisticsService, formatDuration, formatTimer, dayKey } from './lib/statistics';
   import TimerControls from './components/TimerControls.svelte';
   import CategoryPicker from './components/CategoryPicker.svelte';
@@ -46,10 +46,13 @@
   let soundWrites: Promise<void> = Promise.resolve();
   const effects = new SfxManager(() => snapshot?.settings ?? null, convertFileSrc, notify);
   const soundPreview = new SoundPreview(notify);
+  const goodbyeVoice = new VoiceManager('Прощание');
+  goodbyeVoice.onError = notify;
   let previewGeneration = 0;
   let resizeReady: Promise<unknown> = Promise.resolve(); let resizing = false; let resizeBusy = false; let lastResize = 0;
   let geometrySaveTimeout: ReturnType<typeof setTimeout> | undefined;
   let closing = $state(false), fading = $state(false);
+  let farewellVisible = $state(false);
 
   function notify(text: string) { toast = text; clearTimeout(toastTimeout); toastTimeout = setTimeout(() => toast = '', 12000); }
   async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -100,8 +103,8 @@
   function update(value: Snapshot) {
     const previous = snapshot;
     snapshot = value;
-    effects.configure(value.timer.phase !== 'Focus'); soundPreview.configure(value.settings);
-    if (value.activeWindow !== label) { stopPreview(); effects.stop(); }
+    effects.configure(value.timer.phase !== 'Focus'); soundPreview.configure(value.settings); goodbyeVoice.configure(value.settings);
+    if (value.activeWindow !== label) { stopPreview(); effects.stop(); goodbyeVoice.stop(); }
     else if (previous && previous.activeWindow !== label) {
       // Play in the newly active WebView: the old one is already hidden.
       if (!value.quitting) playEffect(companion ? 'main_close' : 'main_open');
@@ -109,7 +112,7 @@
     }
     if (previous && previous.timer.phase !== value.timer.phase) stopPreview();
     if (value.quitting && value.activeWindow === label) void presentQuit();
-    else if (!value.quitting) { closing = false; fading = false; }
+    else if (!value.quitting) { closing = false; fading = false; farewellVisible = false; }
     syncController();
   }
   function playEffect(event: string) { if (!closing && snapshot?.activeWindow === label && !document.hidden) void effects.event(event).catch(e => notify(String(e))); }
@@ -127,26 +130,41 @@
     if (event.target instanceof Element && hoverButton(event.target, event.relatedTarget instanceof Node ? event.relatedTarget : null)) playEffect('choice_hover');
   }
   function visibilityChanged() {
+    if (document.hidden) { stopPreview(); effects.stop(); goodbyeVoice.stop(); }
     if (closing) return;
-    if (document.hidden) { stopPreview(); effects.stop(); }
     syncController();
   }
   async function presentQuit() {
     if (closing) return;
+    const previousPage = page, previousVisual = visual;
     closing = true; context = false; dialogueEditor = false;
-    controller?.dispose(); controller = null; stopPreview(); effects.stop();
+    controller?.dispose(); controller = null; stopPreview(); effects.stop(); goodbyeVoice.stop();
     try {
       await closePresentation(
         async () => { await Promise.all([soundWrites, settingsSaver.flush(), durationWrites, resizeReady, ...[...categorySavers.values()].map(saver => saver.flush())]); },
         async () => {
+          if (document.hidden) return;
           const limit = setTimeout(() => effects.stop(), exitAudioLimitMs);
           try { await effects.event('app_quit'); } finally { clearTimeout(limit); }
         },
         async () => { fading = true; await tick(); await new Promise(resolve => setTimeout(resolve, exitFadeMs)); },
         () => call<void>('complete_quit'),
+        async () => {
+          if (!companion) page = 'focus';
+          const line = farewellLine(dialogueData);
+          setVisual({ ...visual, emotion: line.emotion, ru: line.ru, en: '', speaking: true, typing: false, awaitingInput: false });
+          farewellVisible = true;
+          await tick();
+          const abort = new AbortController();
+          await farewellPresentation(
+            () => document.hidden || !snapshot ? Promise.resolve() : goodbyeVoice.play(line.voice, snapshot.settings, (path, signal) => loadVoiceSource(path, convertFileSrc, signal), abort.signal),
+            () => { abort.abort(); goodbyeVoice.stop(); },
+          );
+        },
       );
     } catch (error) {
-      effects.stop(); closing = false; fading = false;
+      effects.stop(); goodbyeVoice.stop(); closing = false; fading = false; farewellVisible = false;
+      page = previousPage; setVisual(previousVisual);
       await call('cancel_quit').catch(() => {}); notify(String(error));
     }
   }
@@ -312,7 +330,7 @@
         if (!disposed) update(await invoke<Snapshot>('get_state'));
       } catch (e) { fatal = String(e); }
     })();
-    return () => { disposed = true; for (const unlisten of unlisteners) unlisten(); controller?.dispose(); stopPreview(); effects.stop(); clearTimeout(transitionTimeout); clearTimeout(toastTimeout); clearTimeout(geometrySaveTimeout); };
+    return () => { disposed = true; for (const unlisten of unlisteners) unlisten(); controller?.dispose(); stopPreview(); effects.stop(); goodbyeVoice.stop(); clearTimeout(transitionTimeout); clearTimeout(toastTimeout); clearTimeout(geometrySaveTimeout); };
   });
 </script>
 
@@ -320,14 +338,14 @@
 <svelte:window onpointerover={hover} onresize={saveGeometrySoon} onkeydown={e => { if (e.key === 'Escape') { setContextMenu(false); dialogueEditor = false; stopPreview(); controller?.skip(); } }}/>
 
 {#if companion}
-  <main class="companion" inert={closing} class:inactive={!isActive} oncontextmenu={e => { e.preventDefault(); setContextMenu(!context); }}>
-    <button class="companion-character" data-hover-exclude aria-label="Мику: клик — открыть, перетаскивание — переместить" onclick={companionClick} onpointerdown={pointerDown} onpointermove={pointerMove} onpointerup={pointerUp} onpointercancel={pointerUp}>
+  <main class="companion" inert={closing && !farewellVisible} class:inactive={!isActive} oncontextmenu={e => { e.preventDefault(); setContextMenu(!context); }}>
+    <button class="companion-character" inert={closing} data-hover-exclude aria-label="Мику: клик — открыть, перетаскивание — переместить" onclick={companionClick} onpointerdown={pointerDown} onpointermove={pointerMove} onpointerup={pointerUp} onpointercancel={pointerUp}>
       {#if transition}<img class="sprite-old" src={previousSprite} alt="" draggable="false"/>{/if}
       <img class="sprite-current" src={sprite} alt="Мику" draggable="false"/>
     </button>
-    {#if snapshot}<button class="companion-clock" onclick={() => windowAction('main')} title="Открыть Miku Focus"><span class:working={snapshot.timer.status === 'Focus'}>♡</span> {formatTimer(snapshot.remainingMs)} <small>{snapshot.timer.phase !== 'Focus' ? 'отдых' : snapshot.timer.status === 'Paused' ? 'Ⅱ' : snapshot.timer.status === 'AwaitingDecision' ? '+5?' : '✧'}</small></button>{/if}
-    {#if visual.speaking && isActive}<div class="companion-bubble" data-hover-exclude><p id="companion-dialogue-text">{visual.ru}</p>{#if visual.awaitingInput}<small>Нажмите, чтобы продолжить ▸</small>{/if}<button class="bubble-advance" aria-label="Продолжить диалог" aria-describedby="companion-dialogue-text" onclick={advanceDialogue}></button></div>{/if}
-    <button class="resize-handle" data-hover-exclude aria-label="Изменить размер помощника" title="Потяните угол мышкой. Клавиши стрелок меняют размер на 10 пикселей."
+    {#if snapshot}<button class="companion-clock" inert={closing} onclick={() => windowAction('main')} title="Открыть Miku Focus"><span class:working={snapshot.timer.status === 'Focus'}>♡</span> {formatTimer(snapshot.remainingMs)} <small>{snapshot.timer.phase !== 'Focus' ? 'отдых' : snapshot.timer.status === 'Paused' ? 'Ⅱ' : snapshot.timer.status === 'AwaitingDecision' ? '+5?' : '✧'}</small></button>{/if}
+    {#if visual.speaking && isActive}<div class="companion-bubble" data-hover-exclude><p id="companion-dialogue-text" aria-live={closing ? 'polite' : 'off'}>{visual.ru}</p>{#if visual.awaitingInput}<small>Нажмите, чтобы продолжить ▸</small>{/if}{#if !closing}<button class="bubble-advance" aria-label="Продолжить диалог" aria-describedby="companion-dialogue-text" onclick={advanceDialogue}></button>{/if}</div>{/if}
+    <button class="resize-handle" inert={closing} data-hover-exclude aria-label="Изменить размер помощника" title="Потяните угол мышкой. Клавиши стрелок меняют размер на 10 пикселей."
       onpointerdown={resizeDown} onpointermove={resizeMove} onpointerup={resizeEnd} onpointercancel={resizeEnd} onkeydown={resizeKey}>
       <svg viewBox="0 0 18 18" aria-hidden="true"><path d="M4 14 14 4M9 14l5-5"/></svg>
     </button>
@@ -335,26 +353,28 @@
     {#if toast || fatal}<div class="companion-error" role="alert">{toast || fatal}</div>{/if}
   </main>
 {:else}
-  <main class="app-shell" inert={closing}>
-    <header class="app-header"><a class="brand" href="#focus" onclick={() => navigate('focus')}><span class="brand-flower">✿</span><span>Miku <b>Focus</b></span></a><div class="header-actions"><button class="header-button" class:muted={snapshot?.settings.quietMode} title="Тихий режим" aria-label="Переключить тихий режим" onclick={() => { if (snapshot) void save({ quietMode: !snapshot.settings.quietMode }).catch(() => {}); }}>{snapshot?.settings.quietMode ? '♪̸' : '♫'}</button><button class="gloss small" onclick={() => windowAction('background')}>{snapshot?.settings.backgroundMode === 'Panel' ? 'Свернуть в панель' : 'Помощник'} <span>↗</span></button><button class="header-button" aria-label="Сохранить и выйти" title="Сохранить и выйти" onclick={() => windowAction('quit')}>⏻</button></div></header>
-    <nav class="main-tabs"><button class:active={page === 'focus'} onclick={() => navigate('focus')}>♡ Комната фокуса</button><button class:active={page === 'diary'} onclick={() => navigate('diary')}>✧ Дневник занятий</button><button class:active={page === 'settings'} onclick={() => navigate('settings')}>Настройки</button><span class="nav-date">{new Date(snapshot?.now ?? Date.now()).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}</span></nav>
+  <main class="app-shell" class:closing inert={closing && !farewellVisible}>
+    <header class="app-header" inert={closing}><a class="brand" href="#focus" onclick={() => navigate('focus')}><span class="brand-flower">✿</span><span>Miku <b>Focus</b></span></a><div class="header-actions"><button class="header-button" class:muted={snapshot?.settings.quietMode} title="Тихий режим" aria-label="Переключить тихий режим" onclick={() => { if (snapshot) void save({ quietMode: !snapshot.settings.quietMode }).catch(() => {}); }}>{snapshot?.settings.quietMode ? '♪̸' : '♫'}</button><button class="gloss small" onclick={() => windowAction('background')}>{snapshot?.settings.backgroundMode === 'Panel' ? 'Свернуть в панель' : 'Помощник'} <span>↗</span></button><button class="header-button" aria-label="Сохранить и выйти" title="Сохранить и выйти" onclick={() => windowAction('quit')}>⏻</button></div></header>
+    <nav class="main-tabs" inert={closing}><button class:active={page === 'focus'} onclick={() => navigate('focus')}>♡ Комната фокуса</button><button class:active={page === 'diary'} onclick={() => navigate('diary')}>✧ Дневник занятий</button><button class:active={page === 'settings'} onclick={() => navigate('settings')}>Настройки</button><span class="nav-date">{new Date(snapshot?.now ?? Date.now()).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}</span></nav>
     {#if fatal}<section class="fatal-error"><h2>Не удалось открыть локальные данные</h2><p>{fatal}</p><p>Файлы не удалены. Для запуска используйте <code>npm run tauri dev</code>, не браузер.</p></section>
     {:else if !snapshot}<div class="loading">Мику уже идёт… ♡</div>
     {:else if page === 'diary' && isActive}<Diary {snapshot} {exportData} {arrowSound} {choiceSound}/>
     {:else if page === 'settings' && isActive}<Settings {snapshot} {save} status={saveStatus} {categorySave} {upload} resetArt={() => { void call('reset_art').catch(() => {}); }} {editDialogues} {bindSfx} {clearSound} {preview} {stopPreview} {arrowSound} {choiceSound} {chooseObsidian} {disconnectObsidian} {refreshObsidian}/>
     {:else if page === 'focus'}
-      <section class="focus-scene" style:background-image={`linear-gradient(90deg,rgba(224,255,247,.18),rgba(243,255,251,.12) 62%,rgba(236,255,249,.85)),url("${background}")`}>
+      <section class="focus-scene" inert={closing} style:background-image={`linear-gradient(90deg,rgba(224,255,247,.18),rgba(243,255,251,.12) 62%,rgba(236,255,249,.85)),url("${background}")`}>
         <div class="scene-decoration heart-one">♡</div><div class="scene-decoration heart-two">✧</div>
         <button class="main-character" data-hover-exclude onclick={() => requestReaction('touch')} aria-label="Поговорить с Мику">
           {#if transition}<img class="sprite-old" src={previousSprite} alt="" draggable="false"/>{/if}<img class="sprite-current" src={sprite} alt={`Мику: ${emotionNames[visual.emotion]}`} draggable="false"/>
         </button>
         <div class="focus-sidebar"><CategoryPicker categories={snapshot.categories} value={snapshot.selectedCategory} select={id => { void call('select_category', { id }).catch(() => {}); }} {choiceSound}/><TimerControls {snapshot} {act} {adjustFocusDuration}/><div class="today-mini">Сегодня <strong>{formatDuration(new StatisticsService(snapshot).get(dayKey(snapshot.now)).workMs)}</strong></div></div>
       </section>
-      <DialoguePanel {visual} advance={advanceDialogue} skip={() => controller?.skip()}/>
+      <DialoguePanel {visual} passive={closing} advance={advanceDialogue} skip={() => controller?.skip()}/>
     {/if}
-    <footer class="app-footer"><span>Miku Focus</span><span>{snapshot?.recovered ? 'Таймер восстановлен' : ''}</span></footer>
-    {#if toast || snapshot?.error}<div class="toast" role="status"><span>{toast || snapshot?.error}</span><button aria-label="Закрыть уведомление" onclick={() => { toast = ''; if (snapshot) snapshot = { ...snapshot, error: null }; }}>×</button></div>{/if}
+    <footer class="app-footer" inert={closing}><span>Miku Focus</span><span>{snapshot?.recovered ? 'Таймер восстановлен' : ''}</span></footer>
+    {#if toast || snapshot?.error}<div class="toast" inert={closing} role="status"><span>{toast || snapshot?.error}</span><button aria-label="Закрыть уведомление" onclick={() => { toast = ''; if (snapshot) snapshot = { ...snapshot, error: null }; }}>×</button></div>{/if}
     {#if dialogueEditor}<div class="modal-backdrop"><div class="json-editor" role="dialog" tabindex="-1" aria-modal="true" aria-label="Редактор диалогов"><h2>Диалоги Мику <span>♡</span></h2><p>en — английская озвучка, ru — субтитры, emotion — ID, voice — имя WAV/OGG без расширения.</p><textarea aria-label="JSON диалогов" spellcheck="false" bind:value={dialogueText}></textarea><div><button class="gloss primary" onclick={saveDialogues}>Сохранить</button><button class="gloss" onclick={() => dialogueEditor = false}>Отмена</button></div></div></div>{/if}
   </main>
 {/if}
-{#if closing && isActive}<div class="shutdown-curtain" class:fading style:--exit-fade={`${exitFadeMs}ms`} role="status" aria-label="Завершение работы"></div>{/if}
+{#if closing && isActive}
+  <div class="shutdown-curtain" class:fading style:--exit-fade={`${exitFadeMs}ms`} role="status" aria-label="Завершение работы"></div>
+{/if}

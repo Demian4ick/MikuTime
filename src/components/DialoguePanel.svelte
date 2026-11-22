@@ -1,17 +1,17 @@
 <script lang="ts">
   import type { VisualState } from '../lib/reactions';
-  let { visual, advance, skip }: { visual: VisualState; advance: () => void; skip: () => void } = $props();
+  let { visual, advance, skip, passive = false }: { visual: VisualState; advance: () => void; skip: () => void; passive?: boolean } = $props();
 </script>
 
 <section class="dialogue-panel" data-hover-exclude aria-label="Русские субтитры">
   <div class="nameplate">Хацунэ Мику <span>Твой помощник</span><i>♡</i></div>
-  <p class="subtitle" id="dialogue-text" aria-live="off">{visual.ru}{#if visual.typing}<span class="type-cursor">▏</span>{/if}</p>
+  <p class="subtitle" id="dialogue-text" aria-live={passive ? 'polite' : 'off'}>{visual.ru}{#if visual.typing}<span class="type-cursor">▏</span>{/if}</p>
   {#if visual.awaitingInput}<span class="continue-note">Нажмите, чтобы продолжить ▸</span>{/if}
   <span class="dialogue-corner">✧</span>
-  <button class="dialogue-advance" type="button" aria-label="Продолжить диалог" aria-describedby="dialogue-text" disabled={!visual.speaking} onclick={advance}
+  {#if !passive}<button class="dialogue-advance" type="button" aria-label="Продолжить диалог" aria-describedby="dialogue-text" disabled={!visual.speaking} onclick={advance}
     title={visual.typing ? 'Нажмите, чтобы показать реплику целиком' : 'Нажмите, чтобы продолжить диалог'}>
   </button>
-  <button class="skip-line" title="Пропустить реплику" onclick={skip}>Пропустить »</button>
+  <button class="skip-line" title="Пропустить реплику" onclick={skip}>Пропустить »</button>{/if}
 </section>
 
 <style>

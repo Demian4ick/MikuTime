@@ -20,6 +20,8 @@ p.add_argument('--full', action='store_true', help='Wait for a real one-minute f
 p.add_argument('--x11', action='store_true', help='Private Xvfb/DBus session; not a Wayland verification')
 p.add_argument('--obsidian-only', action='store_true', help='Check only the native export-folder connection')
 p.add_argument('--panel-only', action='store_true', help='Check the owned Rust stream and panel window mode')
+p.add_argument('--quit-only', choices=['main', 'companion'], help='Check farewell and bounded shutdown only')
+p.add_argument('--quiet-exit', action='store_true', help='Check the farewell with Quiet Mode enabled')
 p.add_argument('--pointer-helper', type=Path, help='Existing Wayland virtual-pointer test helper, only for this owned window')
 args = p.parse_args()
 if '.local-test' not in args.data.resolve().parts:
@@ -235,6 +237,21 @@ def screenshot(name):
         from gi.repository import Gdk
         image = Gdk.pixbuf_get_from_window(Gdk.get_default_root_window(), *c['at'], *c['size'])
         assert image is not None, 'Could not capture the private Xvfb test window'
+        if name == 'exit-black.png':
+            # WebKit may schedule the first animation frame later after remounting
+            # focus from Settings. Wait for the actual black frame, not a guessed instant.
+            deadline = time.monotonic() + 1.8
+            while time.monotonic() < deadline:
+                pixels = image.get_pixels(); stride = image.get_rowstride(); channels = image.get_n_channels()
+                points = [(image.get_width() // 2, image.get_height() // 2), (image.get_width() - 8, image.get_height() // 2), (8, 8)]
+                if all(max(pixels[y * stride + x * channels:y * stride + x * channels + 3]) <= 3 for x, y in points): break
+                time.sleep(.05)
+                try:
+                    c = client(); Gdk.Display.get_default().sync()
+                    next_image = Gdk.pixbuf_get_from_window(Gdk.get_default_root_window(), *c['at'], *c['size'])
+                    if next_image is None: break
+                    image = next_image
+                except (subprocess.CalledProcessError, IndexError, GLib.Error): break
         image.savev(str(args.data.parent / name), 'png', [], [])
         if name == 'exit-black.png':
             pixels = image.get_pixels(); stride = image.get_rowstride(); channels = image.get_n_channels()
@@ -245,6 +262,53 @@ def screenshot(name):
     time.sleep(.3)
     c = client(); x, y = c['at']; w, h = c['size']
     subprocess.run(['grim', '-g', f'{x},{y} {w}x{h}', str(args.data.parent / name)], check=True)
+
+def finish_exit_checks():
+    if args.quiet_exit:
+        assert persisted(lambda s: s['settings']['quietMode'])
+    if args.x11:
+        # Xvfb has no WM; emulate the focus a real click gives the foreground WebView.
+        subprocess.run(['xdotool', 'windowfocus', '--sync', client()['address']], check=True)
+    started = time.monotonic()
+    click('Сохранить и выйти')
+    check('quit displays a black-fade presentation instead of exiting immediately', find(app, lambda o: o.get_name() == 'Завершение работы') is not None and Path(f'/proc/{args.pid}').exists())
+    farewell = 'Я буду ждать нашей следующей встречи ♡'
+    if args.quit_only == 'companion':
+        dialogue = find(app, lambda o: o.get_text_iface() is not None and Atspi.Text.get_text(o, 0, -1) == farewell)
+    else:
+        dialogue = find(app, lambda o: o.get_name() == 'Русские субтитры')
+    check('quit shows the farewell in the existing dialogue surface without requiring a click', dialogue is not None and farewell in all_text(dialogue))
+    check('quit has no separate farewell card', find(app, lambda o: o.get_name() == 'Прощание Мику') is None)
+    screenshot('exit-farewell.png')
+    if not args.quiet_exit:
+        # Farewell, 1.5s fade and 2.5s close SFX now start together.
+        # Inspect black while the longer SFX is still keeping the process alive.
+        time.sleep(max(0, started + 1.8 - time.monotonic()))
+        # Transparent companion surfaces may present animation frames later than
+        # the opaque main window. Inspect their fade, not black at a fixed instant.
+        screenshot('exit-fade.png' if args.quit_only == 'companion' else 'exit-black.png')
+
+if args.quit_only:
+    before = (state()['sessions'], state()['breaks'], state()['timer'])
+    if args.quiet_exit:
+        click('Переключить тихий режим')
+        assert persisted(lambda s: s['settings']['quietMode'])
+    if args.quit_only == 'companion':
+        click('Помощник ↗')
+        character = find(app, lambda o: o.get_name() == 'Мику: клик — открыть, перетаскивание — переместить')
+        assert character is not None
+        if args.x11:
+            c = client(); x, y = c['at']; w, h = c['size']
+            subprocess.run(['xdotool', 'mousemove', str(x + w // 2), str(y + h // 2), 'click', '3'], check=True)
+            time.sleep(.2)
+        else:
+            keys(character, 'Menu')
+    else:
+        click('Настройки')  # Exit must restore the ordinary dialogue even from another tab.
+    finish_exit_checks()
+    check('farewell leaves timer and recorded history unchanged', (state()['sessions'], state()['breaks'], state()['timer']) == before)
+    (args.data.parent / 'smoke-results.json').write_text(json.dumps({'backend': 'X11/Xvfb' if args.x11 else 'Wayland/Hyprland', 'checks': checks, 'count': len(checks)}))
+    raise SystemExit(0)
 
 if args.panel_only:
     from panel_smoke import run
@@ -658,11 +722,7 @@ geometry_settled(lambda c: c['at'] == [111, 222])
 check('companion position restores', client()['at'] == [111, 222])
 check('companion size restores after switching windows', client()['size'] == expected_size)
 click('Мику: клик — открыть, перетаскивание — переместить')
-click('Сохранить и выйти')
-check('quit displays a black-fade presentation instead of exiting immediately', find(app, lambda o: o.get_name() == 'Завершение работы') is not None and Path(f'/proc/{args.pid}').exists())
-screenshot('exit-fade.png')
-time.sleep(1.5 if args.x11 else 1)
-screenshot('exit-black.png')
+finish_exit_checks()
 args.data.parent.mkdir(parents=True, exist_ok=True)
 (args.data.parent / 'smoke-results.json').write_text(json.dumps({'backend': 'X11/Xvfb' if args.x11 else 'Wayland/Hyprland', 'checks': checks, 'count': len(checks)}, indent=2))
 print(f'Native smoke passed: {len(checks)} checks', flush=True)
