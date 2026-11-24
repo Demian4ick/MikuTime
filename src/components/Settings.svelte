@@ -10,10 +10,11 @@
   import type { ArrowDirection } from '../lib/interaction';
   import { emotionFiles } from '../lib/emotions';
   import { emotionNames, talkativenessNames, idleStatusText } from '../lib/localization';
-  let { snapshot, save, status, categorySave, upload, resetArt, editDialogues, bindSfx, clearSound, preview, stopPreview, arrowSound, choiceSound, chooseObsidian, disconnectObsidian, refreshObsidian }: {
+  let { snapshot, save, status, categorySave, upload, resetArt, editDialogues, bindSfx, clearSound, useBuiltinAudio, preview, stopPreview, arrowSound, choiceSound, chooseObsidian, disconnectObsidian, refreshObsidian }: {
     snapshot: Snapshot; save: (patch: SettingsPatch) => Promise<void>; status: SaveStatus; categorySave: (category: Category) => Promise<void>;
     upload: (file: File, kind: string, id: string) => Promise<void>; resetArt: () => void; editDialogues: () => void;
     bindSfx: (event: string, sound: string | null) => Promise<void>; clearSound: (kind: SoundKind, id: string) => Promise<void>;
+    useBuiltinAudio: (id?: string) => Promise<void>;
     preview: (kind: SoundKind, id: string) => Promise<void>; stopPreview: () => void;
     arrowSound: (direction: ArrowDirection) => void;
     choiceSound: () => void;
@@ -57,7 +58,7 @@
     <div class="asset-row"><div><b>Голоса и звуковые эффекты</b><small>Таблицы файлов, прослушивание, замена и назначения — в отдельном разделе.</small></div><button class="gloss" onclick={() => changeTab('sounds')}>Открыть таблицу звуков</button></div>
     <div class="inline-actions"><button class="gloss" onclick={editDialogues}>Редактировать JSON диалогов</button><button class="text-button" onclick={resetArt}>Вернуть исходные изображения</button></div>
   {:else if tab === 'sounds'}
-    <SoundSettings settings={snapshot.settings} {save} {upload} {bindSfx} {clearSound} {preview} {stopPreview} {arrowSound} {choiceSound}/>
+    <SoundSettings settings={snapshot.settings} {save} {upload} {bindSfx} {clearSound} {useBuiltinAudio} {preview} {stopPreview} {arrowSound} {choiceSound}/>
   {:else if tab === 'categories'}
     <p class="muted">Архивирование не удаляет историю. Категория уже запущенной сессии не меняется.</p>
     {#each snapshot.categories as category (category.id)}

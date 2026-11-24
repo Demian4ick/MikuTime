@@ -41,6 +41,31 @@ pub fn valid_bindings(
 pub fn default_bindings() -> BTreeMap<String, String> {
     serde_json::from_value(catalog()["defaults"].clone()).expect("Invalid default sound bindings")
 }
+pub fn migration_bindings_v2() -> BTreeMap<String, String> {
+    serde_json::from_value(catalog()["migrationDefaultsV2"].clone())
+        .expect("Invalid legacy sound bindings")
+}
+pub fn default_voices() -> BTreeMap<String, String> {
+    static VOICES: OnceLock<BTreeMap<String, String>> = OnceLock::new();
+    VOICES
+        .get_or_init(|| {
+            let catalog: Value =
+                serde_json::from_str(include_str!("../../src/lib/voice-catalog.json"))
+                    .expect("Invalid bundled voice catalogue");
+            catalog["voices"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|voice| {
+                    (
+                        voice["id"].as_str().unwrap().into(),
+                        voice["file"].as_str().unwrap().into(),
+                    )
+                })
+                .collect()
+        })
+        .clone()
+}
 
 #[cfg(test)]
 mod tests {
@@ -59,7 +84,8 @@ mod tests {
         assert!(!event("arbitrary_command"));
         assert!(!valid_id("../bad"));
         assert!(valid_bindings(&default_bindings(), &BTreeMap::new()));
-        assert_eq!(default_bindings().len(), 6);
+        assert_eq!(default_bindings().len(), 20);
+        assert_eq!(migration_bindings_v2().len(), 6);
     }
     #[test]
     fn legacy_settings_add_approved_audio_defaults_and_keep_existing_voices() {
@@ -137,7 +163,7 @@ mod tests {
         assert_eq!(settings.sfx_bindings["pause"], "high");
         assert!(settings.sfx.is_empty());
         settings.clear_sound("voice", "hello").unwrap();
-        assert!(settings.voices.is_empty());
+        assert_eq!(settings.voices, default_voices());
         assert!(settings.clear_sound("bad", "high").is_err());
         assert!(settings.validate().is_ok());
     }
@@ -163,5 +189,69 @@ mod tests {
             })
             .is_err());
         assert_eq!(db.settings.sfx_volume, 0.0);
+    }
+    #[test]
+    fn fresh_install_contains_all_voices_and_laptop_effect_assignments() {
+        let settings = crate::timer::Settings::default();
+        assert_eq!(settings.voices.len(), 21);
+        assert_eq!(settings.voices["goodbye"], "/voices/goodbye.wav");
+        assert_eq!(settings.sfx_bindings.len(), 20);
+        assert_eq!(settings.sfx_bindings["launch"], "game-menu-open");
+        assert_eq!(settings.sfx_bindings["start"], "game-menu-close");
+        assert_eq!(settings.volume, 0.7);
+        assert_eq!(settings.sfx_volume, 0.5);
+        assert!(settings
+            .voices
+            .iter()
+            .all(|(id, path)| valid_id(id) && path == &format!("/voices/{id}.wav")));
+        assert!(settings.validate().is_ok());
+    }
+    #[test]
+    fn saved_empty_voices_and_disabled_events_stay_empty_after_upgrade_and_reload() {
+        let mut settings: crate::timer::Settings = serde_json::from_str(
+            r#"{"voices":{},"sfxBindings":{},"soundDefaultsVersion":2,"quietMode":true}"#,
+        )
+        .unwrap();
+        settings.migrate_sound_defaults();
+        assert!(settings.voices.is_empty() && settings.sfx_bindings.is_empty());
+        assert!(settings.quiet_mode);
+        let mut fresh = crate::timer::Settings::default();
+        fresh.clear_sound("voice", "welcome").unwrap();
+        fresh.bind_sfx("launch", None).unwrap();
+        let restored: crate::timer::Settings =
+            serde_json::from_value(serde_json::to_value(&fresh).unwrap()).unwrap();
+        assert!(!restored.voices.contains_key("welcome"));
+        assert!(!restored.sfx_bindings.contains_key("launch"));
+    }
+    #[test]
+    fn explicit_builtin_set_preserves_imports_custom_assignments_and_other_settings() {
+        let mut settings: crate::timer::Settings = serde_json::from_str(r#"{"voices":{"welcome":"/local/my-voice.wav"},"sfxBindings":{"start":"soft"},"soundDefaultsVersion":2,"quietMode":true,"volume":0.2,"sfxVolume":0.1,"focusMinutes":37}"#).unwrap();
+        settings.use_builtin_audio(None).unwrap();
+        assert_eq!(settings.voices.len(), 21);
+        assert_eq!(settings.voices["welcome"], "/local/my-voice.wav");
+        assert_eq!(settings.sfx_bindings["start"], "soft");
+        assert_eq!(settings.sfx_bindings.len(), 20);
+        assert!(settings.quiet_mode);
+        assert_eq!(
+            (settings.volume, settings.sfx_volume, settings.focus_minutes),
+            (0.2, 0.1, 37)
+        );
+        settings.use_builtin_audio(Some("welcome")).unwrap();
+        assert_eq!(settings.voices["welcome"], "/voices/welcome.wav");
+        let before = serde_json::to_value(&settings).unwrap();
+        assert!(settings.use_builtin_audio(Some("../private")).is_err());
+        assert_eq!(serde_json::to_value(settings).unwrap(), before);
+    }
+    #[test]
+    fn legacy_migration_does_not_enable_new_defaults_over_previous_choices() {
+        let mut settings: crate::timer::Settings = serde_json::from_str(
+            r#"{"voices":{},"sfxBindings":{"start":"soft"},"soundDefaultsVersion":0}"#,
+        )
+        .unwrap();
+        settings.migrate_sound_defaults();
+        assert_eq!(settings.sfx_bindings["start"], "soft");
+        assert_eq!(settings.sfx_bindings.len(), 7);
+        assert!(!settings.sfx_bindings.contains_key("launch"));
+        assert!(settings.voices.is_empty());
     }
 }

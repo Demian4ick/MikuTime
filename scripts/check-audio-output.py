@@ -24,6 +24,8 @@ p.add_argument('--quiet-exit', action='store_true', help='With --quit, require s
 p.add_argument('--farewell-wav', type=Path, help='With --quit, compare a supplied goodbye WAV preview and full voiced exit')
 p.add_argument('--quit-companion', action='store_true', help='With --quit, exit through the owned companion menu')
 p.add_argument('--quit-voice-only', action='store_true', help='With --farewell-wav, mute only the close SFX to measure the complete voice during fade')
+p.add_argument('--bundled-voices', action='store_true', help='Real first-run defaults: all 21 bundled previews, quiet touch and full goodbye, without any imports')
+p.add_argument('--bundled-restore-only', action='store_true', help='With --bundled-voices, check restore controls and only welcome/goodbye PCM')
 args = p.parse_args()
 if args.panel and not args.decision: p.error('--panel requires --decision')
 if args.quit and args.decision: p.error('--quit and --decision are separate scenarios')
@@ -31,6 +33,8 @@ if args.quiet_exit and not args.quit: p.error('--quiet-exit requires --quit')
 if args.farewell_wav and not args.quit: p.error('--farewell-wav requires --quit')
 if args.quit_companion and not args.quit: p.error('--quit-companion requires --quit')
 if args.quit_voice_only and not args.farewell_wav: p.error('--quit-voice-only requires --farewell-wav')
+if args.bundled_voices and (args.quit or args.decision): p.error('--bundled-voices is a separate scenario')
+if args.bundled_restore_only and not args.bundled_voices: p.error('--bundled-restore-only requires --bundled-voices')
 root = Path(__file__).resolve().parent.parent
 binary = args.binary.resolve() if args.binary else root / f'src-tauri/target/{"debug" if args.debug else "release"}/miku-focus'
 base = root / '.local-test' / f'audio-output-{time.time_ns()}'
@@ -58,7 +62,8 @@ if args.decision:
         'id': 'decision-fixture', 'categoryId': 'programming', 'startedAt': now - 60000,
         'endedAt': None, 'segments': [{'startMs': now - 60000, 'endMs': now}], 'extensions': 0, 'completed': False,
     })
-state_path.write_text(json.dumps(state))
+if args.bundled_voices: state_path.unlink()  # Real first run: Rust creates every default.
+else: state_path.write_text(json.dumps(state))
 sink = f'miku_test_{os.getpid()}'
 default_sink = subprocess.check_output(['pactl', 'get-default-sink'], text=True).strip()
 module = subprocess.check_output(['pactl', 'load-module', 'module-null-sink', f'sink_name={sink}', 'rate=48000', 'channels=2'], text=True).strip()
@@ -70,7 +75,7 @@ print('Audio test directory:', base, flush=True)
 
 def find(obj, name):
     try:
-        if obj.get_name() == name and obj.get_action_iface() is not None: return obj
+        if obj.get_name() == name and (obj.get_action_iface() is not None or obj.get_value_iface() is not None): return obj
         count = obj.get_child_count()
     except GLib.Error: return None
     for i in range(count):
@@ -95,7 +100,7 @@ def visible_text(obj):
         return value
     except GLib.Error: return ''
 
-def capture(name, action):
+def capture(name, action, duration=None):
     global recorder
     path = base / f'{name}.wav'
     raw = base / f'{name}.raw'
@@ -115,7 +120,7 @@ def capture(name, action):
         action()
         # Cold opening from a fully unmapped panel can take longer than reopening
         # an already mapped companion. Keep recording through that transition.
-        time.sleep(5 if args.quit else 3 if args.panel else 1)
+        time.sleep(duration if duration is not None else 5 if args.quit else 3 if args.panel else 1)
         recorder.terminate(); recorder.wait(timeout=10); recorder = None
     pcm = raw.read_bytes()
     with wave.open(str(path), 'wb') as audio:
@@ -146,7 +151,54 @@ with (base / 'desktop.log').open('w') as log:
             time.sleep(.1)
         else: raise RuntimeError('Owned app not found on AT-SPI')
         time.sleep(1)
-        if args.quit:
+        if args.bundled_voices:
+            voices = json.loads((root / 'src/lib/voice-catalog.json').read_text())['voices']
+            catalog = json.loads((root / 'src/lib/sound-catalog.json').read_text())
+            fresh = json.loads(state_path.read_text())
+            assert fresh['settings']['voices'] == {voice['id']: voice['file'] for voice in voices}
+            assert fresh['settings']['sfxBindings'] == catalog['defaults']
+            assert fresh['settings']['volume'] == .7 and fresh['settings']['sfxVolume'] == .5
+            assert not list((data / 'assets').rglob('*')), 'Fresh defaults must not depend on imported files'
+            click('Настройки'); click('Звуки'); click('Громкость и тихий режим')
+            from hypr_smoke import dispatch
+            slider = find(accessible, 'Громкость эффектов')
+            clients = json.loads(subprocess.check_output(['hyprctl', '-j', 'clients']))
+            main = next(client for client in clients if client['pid'] == app.pid and client['title'] == 'Miku Focus')
+            dispatch(app.pid, main['address'], 'focus')
+            assert slider is not None and slider.get_component_iface().grab_focus()
+            dispatch(app.pid, main['address'], 'shortcut', '', 'Home')
+            until = time.monotonic() + 5
+            while json.loads(state_path.read_text())['settings']['sfxVolume'] != 0:
+                assert time.monotonic() < until, 'Owned UI did not mute effects for voice-only PCM comparison'
+                time.sleep(.05)
+            click('Голоса (21)')
+            click('Прослушать голос goodbye'); time.sleep(2.2)  # Stop any startup dialogue before recording.
+            click('Отвязать голос welcome')
+            assert 'welcome' not in json.loads(state_path.read_text())['settings']['voices']
+            click('Включить встроенный голос welcome')
+            assert json.loads(state_path.read_text())['settings']['voices']['welcome'] == '/voices/welcome.wav'
+            click('Отвязать голос goodbye')
+            assert 'goodbye' not in json.loads(state_path.read_text())['settings']['voices']
+            click('Подключить встроенный набор')
+            restored = json.loads(state_path.read_text())['settings']
+            assert restored['voices'] == fresh['settings']['voices'] and restored['sfxBindings'] == fresh['settings']['sfxBindings']
+            assert restored['sfxVolume'] == 0 and restored['volume'] == .7, 'Restoring defaults reset volume'
+            for voice in voices:
+                if args.bundled_restore_only and voice['id'] not in ['welcome', 'goodbye']: continue
+                capture('bundled-' + voice['id'], lambda voice=voice: click('Прослушать голос ' + voice['id']), voice['durationMs'] / 1000 + .6)
+                result = results['bundled-' + voice['id']]
+                assert result['peak'] > 100 and result['nonzero'] > 100, voice['id'] + ' produced no PCM'
+            click('Переключить тихий режим'); click('♡ Комната фокуса')
+            capture('bundled-quiet', lambda: click('Поговорить с Мику'), 1.5)
+            assert results['bundled-quiet']['energy'] == 0, 'Bundled voice leaked through Quiet Mode'
+            click('Переключить тихий режим')
+            capture('bundled-quit', lambda: click('Сохранить и выйти'), 4)
+            assert .95 < results['bundled-quit']['energy'] / results['bundled-goodbye']['energy'] < 1.05, 'Built-in goodbye was truncated during the concurrent fade'
+            assert app.wait(timeout=8) == 0
+            current = json.loads(state_path.read_text())
+            assert current['settings']['voices'] == fresh['settings']['voices'] and current['settings']['sfxBindings'] == fresh['settings']['sfxBindings']
+            assert not current['sessions'] and current['timer']['status'] == 'Idle'
+        elif args.quit:
             if args.farewell_wav and not args.quiet_exit:
                 click('Настройки'); click('Звуки')
                 capture('exit-sfx-preview', lambda: click('Прослушать UI SFX_InGameMenu_Close.ogg'))
@@ -228,7 +280,7 @@ with (base / 'desktop.log').open('w') as log:
             reference = results['html-short-high-first']['energy']
             assert all(.95 < energy / reference < 1.05 for energy in energies), 'Interface volume differs from preview at the same saved volume'
         passed = True
-        print('Farewell/exit audio passed' if args.quit else 'Main-only decision voice passed' if args.decision else 'Both playback paths produced PCM; repeated short effects kept their level; Quiet Mode was silent', flush=True)
+        print('Built-in restore controls, first-run bindings, Quiet Mode and complete goodbye passed' if args.bundled_restore_only else 'All 21 built-in voices, first-run bindings, Quiet Mode and complete goodbye passed' if args.bundled_voices else 'Farewell/exit audio passed' if args.quit else 'Main-only decision voice passed' if args.decision else 'Both playback paths produced PCM; repeated short effects kept their level; Quiet Mode was silent', flush=True)
     finally:
         for process in [recorder, app]:
             if process is not None and process.poll() is None:
@@ -237,4 +289,4 @@ with (base / 'desktop.log').open('w') as log:
                 except subprocess.TimeoutExpired: process.kill(); process.wait()
         subprocess.run(['pactl', 'unload-module', module], check=True)
         assert subprocess.check_output(['pactl', 'get-default-sink'], text=True).strip() == default_sink, 'Default output unexpectedly changed'
-        (base / 'summary.json').write_text(json.dumps({'passed': passed, 'mode': 'quit-companion-quiet' if args.quit_companion and args.quiet_exit else 'quit-companion' if args.quit_companion else 'quit-quiet' if args.quiet_exit else 'quit' if args.quit else 'decision-panel' if args.panel else 'decision' if args.decision else 'effects', 'voiceOnly': args.quit_voice_only, 'binary': str(binary), 'sha256': hashlib.sha256(binary.read_bytes()).hexdigest(), 'pid': app.pid if app else None, 'defaultSinkUnchanged': True, 'privateModuleUnloaded': True}, indent=2))
+        (base / 'summary.json').write_text(json.dumps({'passed': passed, 'mode': 'bundled-voices' if args.bundled_voices else 'quit-companion-quiet' if args.quit_companion and args.quiet_exit else 'quit-companion' if args.quit_companion else 'quit-quiet' if args.quiet_exit else 'quit' if args.quit else 'decision-panel' if args.panel else 'decision' if args.decision else 'effects', 'voiceOnly': args.quit_voice_only, 'binary': str(binary), 'sha256': hashlib.sha256(binary.read_bytes()).hexdigest(), 'pid': app.pid if app else None, 'defaultSinkUnchanged': True, 'privateModuleUnloaded': True}, indent=2))

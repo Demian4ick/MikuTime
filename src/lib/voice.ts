@@ -1,10 +1,13 @@
 import type { Settings } from './types.ts';
+import voiceCatalog from './voice-catalog.json' with { type: 'json' };
+export const builtinVoices = voiceCatalog.voices;
+export const builtinVoicePath = (id: string): string | undefined => builtinVoices.find(voice => voice.id === id)?.file;
 export interface AudioSource { url: string; release: () => void }
 export type AudioUrl = (path: string, signal?: AbortSignal) => string | Promise<AudioSource>;
 
-/** WebKit cannot reliably open imported WAV over asset://; fetch just the active line, never a voice library. */
+/** Both bundled and imported WAV use a lazy typed Blob; fetch only the active line. */
 export async function loadVoiceSource(path: string, localUrl: (path: string) => string, signal?: AbortSignal): Promise<AudioSource> {
-  const response = await fetch(localUrl(path), { signal });
+  const response = await fetch(builtinVoices.some(voice => voice.file === path) ? path : localUrl(path), { signal });
   if (!response.ok) throw new Error('Не удалось открыть локальную озвучку.');
   const limit = 20 * 1024 * 1024;
   if (Number(response.headers.get('content-length')) > limit) throw new Error('Файл озвучки больше 20 МиБ.');

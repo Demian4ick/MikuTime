@@ -70,7 +70,7 @@ impl Default for Settings {
             companion_size: None,
             background: None,
             sprites: BTreeMap::new(),
-            voices: BTreeMap::new(),
+            voices: crate::audio::default_voices(),
             sfx: BTreeMap::new(),
             sfx_bindings: crate::audio::default_bindings(),
             sfx_volume: 0.5,
@@ -83,7 +83,8 @@ impl Settings {
         if self.sound_defaults_version >= 2 {
             return;
         }
-        let defaults = crate::audio::default_bindings();
+        // Historical migrations must not adopt the expanded fresh-install defaults.
+        let defaults = crate::audio::migration_bindings_v2();
         if self.sound_defaults_version == 0 {
             // Original opt-in assignments plus the newly approved inner-menu click.
             self.sfx_bindings.extend(defaults);
@@ -105,6 +106,11 @@ impl Settings {
             || !self.sfx_volume.is_finite()
             || !(0.0..=1.0).contains(&self.sfx_volume)
             || self.sfx.len() > 200
+            || self.voices.len() > 200
+            || self
+                .voices
+                .iter()
+                .any(|(id, path)| !crate::audio::valid_id(id) || path.is_empty())
             || self
                 .sfx
                 .iter()
@@ -148,6 +154,25 @@ impl Settings {
                 }
             }
             _ => return Err("Неизвестный тип звука".into()),
+        }
+        next.validate()?;
+        *self = next;
+        Ok(())
+    }
+    /// Explicit user action only: keep existing imports/bindings when adding the set.
+    pub fn use_builtin_audio(&mut self, id: Option<&str>) -> Result<(), String> {
+        let mut next = self.clone();
+        let voices = crate::audio::default_voices();
+        if let Some(id) = id {
+            let path = voices.get(id).ok_or("Неизвестный встроенный голос")?;
+            next.voices.insert(id.into(), path.clone());
+        } else {
+            for (id, path) in voices {
+                next.voices.entry(id).or_insert(path);
+            }
+            for (event, sound) in crate::audio::default_bindings() {
+                next.sfx_bindings.entry(event).or_insert(sound);
+            }
         }
         next.validate()?;
         *self = next;

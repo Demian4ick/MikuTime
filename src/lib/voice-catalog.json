@@ -1,0 +1,25 @@
+{
+  "voices": [
+    { "id": "break_complete", "file": "/voices/break_complete.wav", "bytes": 371490, "durationMs": 4210, "sha256": "9214b44f78719d5eb7943e575923d2324ad4c15201ab20414747a0b49c866607" },
+    { "id": "break_skipped", "file": "/voices/break_skipped.wav", "bytes": 546708, "durationMs": 6196, "sha256": "9e94ecf104f53f15e15d9afeca954d6989f19cf56fdd8b4b4497ce4bb8792c74" },
+    { "id": "break_touch", "file": "/voices/break_touch.wav", "bytes": 373852, "durationMs": 4237, "sha256": "dd6776c7dcaaf3e4ff2d12ee94a3d8b4caf677b156e3857014a2f0b979f39af0" },
+    { "id": "company", "file": "/voices/company.wav", "bytes": 366766, "durationMs": 4156, "sha256": "88e57238d67a4eaca35aff0ea9e4f838f2978b694a799b9e0191fe86a5cdaf36" },
+    { "id": "extension", "file": "/voices/extension.wav", "bytes": 346290, "durationMs": 3924, "sha256": "aaa572dbb48bb198f8326a3b4937e60186568a4cdd883d3e1096a642fc292a69" },
+    { "id": "extra_pleased", "file": "/voices/extra_pleased.wav", "bytes": 382908, "durationMs": 4339, "sha256": "29eab6a8db4a0313ae55c5d77771ba6a114c0be6f9cab2443bcd1c62996a485b" },
+    { "id": "extra_surprised", "file": "/voices/extra_surprised.wav", "bytes": 256516, "durationMs": 2906, "sha256": "bc43f69ebeb21c1c9151da0e4f29ba62a6ebe9d8dcc3759b989fbb328246643f" },
+    { "id": "finish", "file": "/voices/finish.wav", "bytes": 689640, "durationMs": 7817, "sha256": "dffe0496655f3664e86ba1b2bf8324cf4925b3d11024263b96170cb3718ba859" },
+    { "id": "focus_complete", "file": "/voices/focus_complete.wav", "bytes": 415196, "durationMs": 4705, "sha256": "8d3ac34652cd8c5c11601b6986ae000d2a8be50d271ab7342b4882b607bf30ec" },
+    { "id": "goal", "file": "/voices/goal.wav", "bytes": 399052, "durationMs": 4522, "sha256": "8ab981e09480e91aa494d48b161b0b63271fc92ad4c33b8f992104e02593f6d2" },
+    { "id": "goodbye", "file": "/voices/goodbye.wav", "bytes": 162016, "durationMs": 1835, "sha256": "461a0d9207809d25145da7fd55d3ff2d63127e0fe25e90339b02a6fc3f7de57b" },
+    { "id": "idle", "file": "/voices/idle.wav", "bytes": 484496, "durationMs": 5491, "sha256": "cdfa45e15e187f232a8e3241513fafef267acb35dcdc1d4f365f137425d1c0d7" },
+    { "id": "long_work", "file": "/voices/long_work.wav", "bytes": 493552, "durationMs": 5594, "sha256": "7a9621da37b0294b3c3c2683000d3c7cafeaf346565840f53e585886ebb9afdb" },
+    { "id": "pause", "file": "/voices/pause.wav", "bytes": 260846, "durationMs": 2955, "sha256": "b173e775d9bc058d791dce0b782be7ac1d5fc66a51a7f08731f043acc0400180" },
+    { "id": "record", "file": "/voices/record.wav", "bytes": 452208, "durationMs": 5125, "sha256": "ab7ee24a9b974c76d867e1e3d5053feb026646d4e4007070b25e5460e0bfe0b6" },
+    { "id": "reset", "file": "/voices/reset.wav", "bytes": 330146, "durationMs": 3741, "sha256": "bf87c7b6c73ca0a19c48e725701efdf79353ac01f7d2e271fd8068d5f987fdbf" },
+    { "id": "resume", "file": "/voices/resume.wav", "bytes": 136422, "durationMs": 1545, "sha256": "5a9ab4ac14f20fe1919d016fb4db7caecc4be31e05da21d308409f73f249bed1" },
+    { "id": "return", "file": "/voices/return.wav", "bytes": 330146, "durationMs": 3741, "sha256": "ef713ac410d1ef5b901fe69e519e9a2ef351c8b585b1a1820fd56137c1eb9176" },
+    { "id": "start", "file": "/voices/start.wav", "bytes": 334478, "durationMs": 3790, "sha256": "c8683ce861ba7bf582ec7ea3c31a3dec28ea72d0557377f4b4b7a3e920cf9e23" },
+    { "id": "touch", "file": "/voices/touch.wav", "bytes": 341566, "durationMs": 3871, "sha256": "6b7b1906cc128b8fc0182d00f1eaaccd9cc946594b85f341d24259ba335d7dcb" },
+    { "id": "welcome", "file": "/voices/welcome.wav", "bytes": 392360, "durationMs": 4446, "sha256": "f21119816a64281e3806aa38ac8e6ba2c866990be789d1f7c304cc1d1c369fba" }
+  ]
+}

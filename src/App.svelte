@@ -191,6 +191,7 @@
   }
   function bindSfx(event: string, sound: string | null) { return queueSound(() => call<void>('bind_sfx', { event, sound })); }
   function clearSound(kind: SoundKind, id: string) { return queueSound(() => call<void>('clear_sound', { kind, id })); }
+  function useBuiltinAudio(id?: string) { return queueSound(() => call<void>('use_builtin_audio', { id: id ?? null })); }
   function stopPreview() { previewGeneration++; soundPreview.stop(); }
   async function preview(kind: SoundKind, id: string) {
     const token = ++previewGeneration;
@@ -359,7 +360,7 @@
     {#if fatal}<section class="fatal-error"><h2>Не удалось открыть локальные данные</h2><p>{fatal}</p><p>Файлы не удалены. Для запуска используйте <code>npm run tauri dev</code>, не браузер.</p></section>
     {:else if !snapshot}<div class="loading">Мику уже идёт… ♡</div>
     {:else if page === 'diary' && isActive}<Diary {snapshot} {exportData} {arrowSound} {choiceSound}/>
-    {:else if page === 'settings' && isActive}<Settings {snapshot} {save} status={saveStatus} {categorySave} {upload} resetArt={() => { void call('reset_art').catch(() => {}); }} {editDialogues} {bindSfx} {clearSound} {preview} {stopPreview} {arrowSound} {choiceSound} {chooseObsidian} {disconnectObsidian} {refreshObsidian}/>
+    {:else if page === 'settings' && isActive}<Settings {snapshot} {save} status={saveStatus} {categorySave} {upload} resetArt={() => { void call('reset_art').catch(() => {}); }} {editDialogues} {bindSfx} {clearSound} {useBuiltinAudio} {preview} {stopPreview} {arrowSound} {choiceSound} {chooseObsidian} {disconnectObsidian} {refreshObsidian}/>
     {:else if page === 'focus'}
       <section class="focus-scene" inert={closing} style:background-image={`linear-gradient(90deg,rgba(224,255,247,.18),rgba(243,255,251,.12) 62%,rgba(236,255,249,.85)),url("${background}")`}>
         <div class="scene-decoration heart-one">♡</div><div class="scene-decoration heart-two">✧</div>

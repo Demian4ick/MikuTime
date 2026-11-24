@@ -456,6 +456,19 @@ fn clear_sound(
     Ok(())
 }
 #[tauri::command]
+fn use_builtin_audio(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    id: Option<String>,
+) -> Result<(), String> {
+    let mut r = state.runtime.lock().unwrap();
+    r.db.settings.use_builtin_audio(id.as_deref())?;
+    state.save(&mut r)?;
+    drop(r);
+    publish(&app);
+    Ok(())
+}
+#[tauri::command]
 fn get_dialogues(state: tauri::State<AppState>) -> Result<Value, String> {
     let path = state.store.root.join("dialogues.json");
     let text = if path.exists() {
@@ -1007,7 +1020,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![get_state, timer_action, claim_reaction, request_reaction,
-            update_settings, set_focus_minutes, adjust_focus_minutes, select_category, save_category, import_asset, reset_art, bind_sfx, clear_sound, get_dialogues, save_dialogues,
+            update_settings, set_focus_minutes, adjust_focus_minutes, select_category, save_category, import_asset, reset_art, bind_sfx, clear_sound, use_builtin_audio, get_dialogues, save_dialogues,
             export_data, choose_obsidian_folder, disconnect_obsidian, refresh_obsidian, window_action, complete_quit, cancel_quit, drag_companion, resize_companion, adjust_companion_size, save_companion_geometry])
         .run(tauri::generate_context!())
         .expect("Miku Focus startup failed; user data has not been discarded");

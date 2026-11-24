@@ -1,6 +1,6 @@
 import catalog from './sound-catalog.json' with { type: 'json' };
 import type { DialogueFile, Settings } from './types.ts';
-import { VoiceManager, loadVoiceSource, type AudioSource } from './voice.ts';
+import { builtinVoicePath, VoiceManager, loadVoiceSource, type AudioSource } from './voice.ts';
 import { ReusableEffects } from './reusable-effects.ts';
 
 export type SoundKind = 'voice' | 'sfx';
@@ -37,15 +37,15 @@ export function effectPath(settings: Settings, id: string): string | undefined {
 }
 
 export function voiceRows(dialogues: DialogueFile | null, settings: Settings) {
-  const rows = new Map<string, { id: string; event: string; text: string; uses: number; path?: string }>();
+  const rows = new Map<string, { id: string; event: string; text: string; uses: number; path?: string; builtinFile?: string }>();
   for (const dialogue of dialogues?.dialogues ?? []) for (const line of dialogue.lines) {
     if (!line.voice) continue;
     const row = rows.get(line.voice);
     if (row) row.uses++;
-    else rows.set(line.voice, { id: line.voice, event: soundEventName(dialogue.event), text: line.ru, uses: 1, path: settings.voices[line.voice] });
+    else rows.set(line.voice, { id: line.voice, event: soundEventName(dialogue.event), text: line.ru, uses: 1, path: settings.voices[line.voice], builtinFile: builtinVoicePath(line.voice) });
   }
   for (const [id, path] of Object.entries(settings.voices)) {
-    if (!rows.has(id)) rows.set(id, { id, event: 'Не используется в диалогах', text: '', uses: 0, path });
+    if (!rows.has(id)) rows.set(id, { id, event: 'Не используется в диалогах', text: '', uses: 0, path, builtinFile: builtinVoicePath(id) });
   }
   return [...rows.values()];
 }

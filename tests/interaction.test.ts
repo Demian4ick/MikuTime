@@ -5,7 +5,8 @@ import { defaultSoundBindings } from '../src/lib/sounds.ts';
 import { readFileSync } from 'node:fs';
 
 test('approved bindings match the requested buttons, hover and shutdown', () => {
-  assert.deepEqual(defaultSoundBindings, { app_quit: 'game-menu-close', duration_up: 'high', duration_down: 'low', menu_open: 'menu-open', choice_hover: 'menu-hover', menu_choice: 'choice-hover' });
+  assert.equal(Object.keys(defaultSoundBindings).length, 20);
+  for (const [event, sound] of Object.entries({ app_quit: 'game-menu-close', duration_up: 'high', duration_down: 'low', menu_open: 'menu-open', choice_hover: 'menu-hover', menu_choice: 'choice-hover' })) assert.equal(defaultSoundBindings[event as keyof typeof defaultSoundBindings], sound);
   assert.ok(exitFadeMs < 2523 && exitAudioLimitMs > 2523);
 });
 test('numeric keyboard arrows report the actual change direction', () => {

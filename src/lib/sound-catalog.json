@@ -34,5 +34,12 @@
     { "id": "reset", "name": "Сброс таймера", "context": "work", "intervalMs": 200 },
     { "id": "goal", "name": "Дневная цель достигнута", "context": "any", "intervalMs": 1000 }
   ],
-  "defaults": { "app_quit": "game-menu-close", "duration_up": "high", "duration_down": "low", "menu_open": "menu-open", "choice_hover": "menu-hover", "menu_choice": "choice-hover" }
+  "migrationDefaultsV2": { "app_quit": "game-menu-close", "duration_up": "high", "duration_down": "low", "menu_open": "menu-open", "choice_hover": "menu-hover", "menu_choice": "choice-hover" },
+  "defaults": {
+    "app_quit": "game-menu-close", "break_skipped": "game-menu-close", "break_start": "choice-hover",
+    "choice_hover": "menu-hover", "dialogue_continue": "soft", "duration_down": "low", "duration_up": "high",
+    "extension": "choice-hover", "first_extension": "choice-hover", "focus_complete": "game-menu-open", "goal": "high",
+    "launch": "game-menu-open", "main_open": "menu-open", "menu_choice": "choice-hover", "menu_close": "low",
+    "menu_open": "menu-open", "pause": "low", "reset": "menu-close", "resume": "menu-close", "start": "game-menu-close"
+  }
 }

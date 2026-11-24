@@ -6,11 +6,12 @@
   import { effectRows, fileName, soundEvents, voiceRows, type SoundKind } from '../lib/sounds';
   import NumberSetting from './NumberSetting.svelte';
   import type { ArrowDirection } from '../lib/interaction';
-  let { settings, save, upload, bindSfx, clearSound, preview, stopPreview, arrowSound, choiceSound }: {
+  let { settings, save, upload, bindSfx, clearSound, useBuiltinAudio, preview, stopPreview, arrowSound, choiceSound }: {
     settings: Settings; save: (patch: SettingsPatch) => Promise<void>;
     upload: (file: File, kind: string, id: string) => Promise<void>;
     bindSfx: (event: string, sound: string | null) => Promise<void>;
     clearSound: (kind: SoundKind, id: string) => Promise<void>;
+    useBuiltinAudio: (id?: string) => Promise<void>;
     preview: (kind: SoundKind, id: string) => Promise<void>; stopPreview: () => void;
     arrowSound: (direction: ArrowDirection) => void;
     choiceSound: () => void;
@@ -61,6 +62,11 @@
     try { await clearSound(kind, id); } catch (e) { error = String(e); }
     finally { busy = false; }
   }
+  async function builtin(id?: string) {
+    stop(); busy = true; error = '';
+    try { await useBuiltinAudio(id); } catch (e) { error = String(e); }
+    finally { busy = false; }
+  }
   onMount(() => { let disposed = false;
     void invoke('get_dialogues').then(data => { if (!disposed) dialogues = validateDialogues(data); }).catch(e => { if (!disposed) error = String(e); });
     return () => { disposed = true; };
@@ -69,6 +75,7 @@
 </script>
 
 <div class="sound-settings" data-no-sfx>
+  <div class="asset-row"><div><b>Встроенная озвучка и эффекты</b><small>Добавляет отсутствующие голоса и назначения, сохраняя ваши замены и громкость.</small></div><button class="gloss small" disabled={busy} onclick={() => { void builtin(); }}>Подключить встроенный набор</button></div>
   <div class="sound-toolbar">
     <div class="sound-tabs" aria-label="Типы звуков"><button class:active={tab === 'sfx'} onclick={() => changeTab('sfx')}>Эффекты ({effects.length})</button><button class:active={tab === 'voice'} onclick={() => changeTab('voice')}>Голоса ({voices.length})</button></div>
     <input type="search" aria-label="Поиск звуков" placeholder="Звук, файл или реплика…" bind:value={query}/>
@@ -102,7 +109,7 @@
     <p class="info-note">ID связывает файл с репликой. «Заменить» назначает выбранный файл этой строке независимо от его имени. Массовый импорт использует имена файлов как ID.</p>
     <div class="sound-table-wrap"><table class="sound-table" aria-label="Голоса персонажа"><thead><tr><th>Событие / ID</th><th>Реплика</th><th>Файл</th><th>Управление</th></tr></thead><tbody>
       {#each voices.filter(row => matches(row.id, row.event, row.text, row.path ?? '')) as row (row.id)}
-        <tr><td><b>{row.event}</b><small>{row.id}{row.uses > 1 ? ` · ${row.uses} репл.` : ''}</small></td><td class="voice-text">{row.text || 'Нет связи с текущим каталогом'}</td><td><span class="file-name" title={row.path ?? ''}>{row.path ? fileName(row.path) : 'Нет файла'}</span></td><td><div class="sound-actions"><button class="gloss small" disabled={settings.quietMode || !row.path || busy} aria-label={`Прослушать голос ${row.id}`} onclick={() => { void play('voice', row.id); }}>{playing === `voice:${row.id}` ? '■' : '▶'}</button><label class="gloss small file-button">{row.path ? 'Заменить' : 'Загрузить'}<input aria-label={`Загрузить голос ${row.id}`} type="file" accept=".wav,.ogg,audio/wav,audio/ogg" disabled={busy} onchange={e => { void files(e, 'voice', row.id); }}/></label>{#if row.path}<button class="text-button" disabled={busy} aria-label={`Отвязать голос ${row.id}`} onclick={() => { void clear('voice', row.id); }}>Отвязать</button>{/if}</div></td></tr>
+        <tr><td><b>{row.event}</b><small>{row.id}{row.uses > 1 ? ` · ${row.uses} репл.` : ''}</small></td><td class="voice-text">{row.text || 'Нет связи с текущим каталогом'}</td><td><span class="file-name" title={row.path ?? ''}>{row.path ? fileName(row.path) : 'Нет файла'}</span>{#if row.path}<small>{row.path === row.builtinFile ? 'Встроенный файл' : 'Локальная копия'}</small>{/if}</td><td><div class="sound-actions"><button class="gloss small" disabled={settings.quietMode || !row.path || busy} aria-label={`Прослушать голос ${row.id}`} onclick={() => { void play('voice', row.id); }}>{playing === `voice:${row.id}` ? '■' : '▶'}</button><label class="gloss small file-button">{row.path ? 'Заменить' : 'Загрузить'}<input aria-label={`Загрузить голос ${row.id}`} type="file" accept=".wav,.ogg,audio/wav,audio/ogg" disabled={busy} onchange={e => { void files(e, 'voice', row.id); }}/></label>{#if row.builtinFile && row.path !== row.builtinFile}<button class="text-button" disabled={busy} aria-label={`Включить встроенный голос ${row.id}`} onclick={() => { void builtin(row.id); }}>{row.path ? 'Вернуть встроенный' : 'Включить встроенный'}</button>{/if}{#if row.path}<button class="text-button" disabled={busy} aria-label={`Отвязать голос ${row.id}`} onclick={() => { void clear('voice', row.id); }}>Отвязать</button>{/if}</div></td></tr>
       {:else}<tr><td colspan="4">Ничего не найдено.</td></tr>{/each}
     </tbody></table></div>
   {/if}
