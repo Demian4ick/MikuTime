@@ -2,7 +2,7 @@
 
 Локальный Pomodoro-таймер с Мику, компактным помощником и статистикой занятий. Интерфейс на русском. Без аккаунтов, сервера и телеметрии.
 
-[**⬇ Скачать бета-версию**](https://github.com/Demian4ick/MikuTime/releases/tag/v0.1.13-beta.1) · [Все версии](https://github.com/Demian4ick/MikuTime/releases) · [Сообщить об ошибке](https://github.com/Demian4ick/MikuTime/issues)
+[**⬇ Скачать бета-версию**](https://github.com/Demian4ick/MikuTime/releases/tag/v0.1.13-beta.2) · [Все версии](https://github.com/Demian4ick/MikuTime/releases) · [Сообщить об ошибке](https://github.com/Demian4ick/MikuTime/issues)
 
 ## Установка
 

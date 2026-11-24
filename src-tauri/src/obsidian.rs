@@ -538,7 +538,9 @@ mod tests {
         fn folder(&self, name: &str) -> PathBuf {
             let path = self.0.join(name);
             fs::create_dir(&path).unwrap();
-            path
+            // The service stores canonical paths; Windows canonicalize also adds
+            // a verbatim prefix. Compare equivalent canonical paths in tests.
+            fs::canonicalize(path).unwrap()
         }
         fn service(&self, name: &str, os: &str) -> ExportService {
             ExportService::new(&self.folder(name), os, |_| {})

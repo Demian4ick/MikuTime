@@ -2,11 +2,11 @@
 
 **Это публичная тестовая сборка, не стабильный выпуск.** Перед обновлением сделайте резервную копию локальных данных и завершите старую версию через «Сохранить и выйти».
 
-## Скачать 0.1.13-beta.1
+## Скачать 0.1.13-beta.2
 
-- **[Windows 10/11 x64 — скачать установщик .exe](https://github.com/Demian4ick/MikuTime/releases/download/v0.1.13-beta.1/Miku-Focus-0.1.13-windows-x64-setup.exe)**
-- **[Arch Linux x86_64 — скачать пакет .pkg.tar.zst](https://github.com/Demian4ick/MikuTime/releases/download/v0.1.13-beta.1/miku-focus-0.1.13-1-x86_64.pkg.tar.zst)**
-- [Контрольные суммы SHA-256](https://github.com/Demian4ick/MikuTime/releases/download/v0.1.13-beta.1/SHA256SUMS.txt)
+- **[Windows 10/11 x64 — скачать установщик .exe](https://github.com/Demian4ick/MikuTime/releases/download/v0.1.13-beta.2/Miku-Focus-0.1.13-windows-x64-setup.exe)**
+- **[Arch Linux x86_64 — скачать пакет .pkg.tar.zst](https://github.com/Demian4ick/MikuTime/releases/download/v0.1.13-beta.2/miku-focus-0.1.13-1-x86_64.pkg.tar.zst)**
+- [Контрольные суммы SHA-256](https://github.com/Demian4ick/MikuTime/releases/download/v0.1.13-beta.2/SHA256SUMS.txt)
 
 Node.js и Rust для установки **не нужны**. Автоматические архивы **Source code** — исходники для разработчиков, не приложение.
 
