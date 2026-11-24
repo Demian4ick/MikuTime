@@ -1,5 +1,9 @@
 # Производительность
 
+## Опубликованная beta.2: реальные CI-пакеты (2026-11-24)
+- Полный success run **45469669316**: Windows tests/build/NSIS **14м22с**, Arch container/tests/build/makepkg **11м03с**, gate **12с**, draft **25с**; стандартные публичные runner, не локальная машина. Измерений CPU/RSS/PSS приложения на Windows эти цифры не заменяют.
+- Windows `.exe` **5 569 315 байт**, Arch `.pkg.tar.zst` **6 555 610 байт**. Source SHA/все hash/состав пакета/PE header проверены; 4 assets доступны анонимно. Опубликован только **prerelease v0.1.13-beta.2**, не stable/latest. Установщики не запускались на пользовательской системе, Windows UI/audio не тестировались вручную, app-data пользователя не менялись.
+
 ## Первый cloud run и Windows-пути (2026-11-24)
 - Первый публичный run **45466356406**: gate 12с, реальная Arch-сборка/пакет **16м05с**; Windows compilation/test stage 4м28с, затем остановка на трёх некорректных path-assertions (54 passed), NSIS не запускался. Это не зависание и не измерение Windows runtime.
 - Исправление только test fixture canonical paths, без runtime изменений/отключения тестов. Для beta.2 запускаются свежие сборки с точным commit provenance; старый тег/artifacts не перемаркируются. Jobs=1/память/таймауты пока без изменений.
