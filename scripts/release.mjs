@@ -7,6 +7,8 @@ import { spawnSync } from 'node:child_process';
 
 const stableVersion = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
 const exact = (pattern, value) => typeof value === 'string' && pattern.exec(value)?.[0] === value;
+const releaseTag = /^v(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)(?:-beta\.[1-9]\d*)?$/;
+export const isBetaTag = tag => exact(releaseTag, tag) && tag.includes('-beta.');
 export function checkVersions(root, expectedTag = '') {
   const json = path => JSON.parse(readFileSync(join(root, path), 'utf8'));
   const text = path => readFileSync(join(root, path), 'utf8');
@@ -28,8 +30,8 @@ export function checkVersions(root, expectedTag = '') {
   for (const [file, value] of Object.entries(versions)) {
     if (value !== version) throw new Error(`Версии не совпадают: ${file}=${value}, ожидается ${version}`);
   }
-  const tag = `v${version}`;
-  if (expectedTag && expectedTag !== tag) throw new Error(`Тег ${expectedTag} не совпадает с версией ${tag}`);
+  const tag = expectedTag || `v${version}`;
+  if (!exact(releaseTag, tag) || tag.split('-beta.')[0] !== `v${version}`) throw new Error(`Тег ${tag} не совпадает с версией v${version} (допустим суффикс -beta.N)`);
   return { version, tag };
 }
 
@@ -70,8 +72,8 @@ export function collectPackage(root, platform) {
   return output;
 }
 
-export function finalizePackages(root, commit = '') {
-  const { version, tag } = checkVersions(root);
+export function finalizePackages(root, commit = '', expectedTag = '') {
+  const { version, tag } = checkVersions(root, expectedTag);
   if (commit && !exact(/^[0-9a-f]{40}$/, commit)) throw new Error('Некорректный SHA коммита');
   const dir = outputDirectory(root), names = Object.values(packageNames(version)).sort();
   const generated = ['SHA256SUMS.txt', 'BUILD_INFO.json'];
@@ -84,13 +86,13 @@ export function finalizePackages(root, commit = '') {
     return { name, sha256: createHash('sha256').update(readFileSync(path)).digest('hex') };
   });
   writeFileSync(join(dir, 'SHA256SUMS.txt'), packages.map(file => `${file.sha256}  ${file.name}\n`).join(''));
-  writeFileSync(join(dir, 'BUILD_INFO.json'), `${JSON.stringify({ version, tag, commit, packages }, null, 2)}\n`);
+  writeFileSync(join(dir, 'BUILD_INFO.json'), `${JSON.stringify({ version, tag, channel: isBetaTag(tag) ? 'beta' : 'stable', commit, packages }, null, 2)}\n`);
   return [...names, ...generated].map(name => join(dir, name));
 }
 
 /** Never edit a published release. Unknown API errors must not be treated as 404. */
 export async function ensureDraft({ repo, tag, commit, token, body, request = fetch }) {
-  if (!exact(/^[\w.-]+\/[\w.-]+$/, repo) || !exact(/^v\d+\.\d+\.\d+$/, tag) || !exact(/^[0-9a-f]{40}$/, commit)) throw new Error('Некорректные параметры релиза');
+  if (!exact(/^[\w.-]+\/[\w.-]+$/, repo) || !exact(releaseTag, tag) || !exact(/^[0-9a-f]{40}$/, commit)) throw new Error('Некорректные параметры релиза');
   if (!token) throw new Error('Нет GH_TOKEN');
   const api = `https://api.github.com/repos/${repo}/releases`;
   const headers = { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
@@ -101,7 +103,8 @@ export async function ensureDraft({ repo, tag, commit, token, body, request = fe
     return release;
   }
   if (response.status !== 404) throw new Error(`GitHub API: ${response.status}, черновик не создан`);
-  const created = await request(api, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ tag_name: tag, target_commitish: commit, name: `Miku Focus ${tag.slice(1)}`, body, draft: true, prerelease: false }) });
+  const beta = isBetaTag(tag);
+  const created = await request(api, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify({ tag_name: tag, target_commitish: commit, name: `Miku Focus ${tag.slice(1)}${beta ? ' — бета-версия' : ''}`, body, draft: true, prerelease: beta, make_latest: beta ? 'false' : 'legacy' }) });
   if (!created.ok) throw new Error(`Не удалось создать черновик: ${created.status}`);
   return created.json();
 }
@@ -113,13 +116,13 @@ async function main() {
     if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\ntag=${tag}\n`);
     console.log(`Версии согласованы: ${tag}`);
   } else if (command === 'collect') console.log(collectPackage(root, platform));
-  else if (command === 'finalize') console.log(finalizePackages(root, process.env.GITHUB_SHA).map(path => basename(path)).join('\n'));
+  else if (command === 'finalize') console.log(finalizePackages(root, process.env.GITHUB_SHA, process.env.EXPECTED_TAG).map(path => basename(path)).join('\n'));
   else if (command === 'publish') {
     if (process.env.GITHUB_EVENT_NAME !== 'push' || !process.env.GITHUB_REF?.startsWith('refs/tags/v')) throw new Error('Черновик создаётся только после push тега');
     const { tag } = checkVersions(root, process.env.EXPECTED_TAG);
     if (process.env.GITHUB_REF !== `refs/tags/${tag}`) throw new Error('Git ref не совпадает с версией');
-    const assets = finalizePackages(root, process.env.GITHUB_SHA);
-    const release = await ensureDraft({ repo: process.env.GITHUB_REPOSITORY, tag, commit: process.env.GITHUB_SHA, token: process.env.GH_TOKEN, body: readFileSync(join(root, '.github/RELEASE_TEMPLATE.md'), 'utf8') });
+    const assets = finalizePackages(root, process.env.GITHUB_SHA, tag);
+    const release = await ensureDraft({ repo: process.env.GITHUB_REPOSITORY, tag, commit: process.env.GITHUB_SHA, token: process.env.GH_TOKEN, body: readFileSync(join(root, isBetaTag(tag) ? '.github/BETA_NOTES.md' : '.github/RELEASE_TEMPLATE.md'), 'utf8') });
     const result = spawnSync('gh', ['release', 'upload', tag, ...assets, '--clobber', '--repo', process.env.GITHUB_REPOSITORY], { stdio: 'inherit' });
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error('Не удалось загрузить файлы в черновик');

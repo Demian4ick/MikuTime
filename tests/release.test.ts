@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { checkVersions, collectPackage, ensureDraft, finalizePackages, packageNames } from '../scripts/release.mjs';
+import { checkVersions, collectPackage, ensureDraft, finalizePackages, isBetaTag, packageNames } from '../scripts/release.mjs';
 
 const version = '0.1.13', commit = 'a'.repeat(40);
 function fixture() {
@@ -41,6 +41,20 @@ test('metadata rejects inconsistent package-lock and prerelease/untrusted versio
     for (const bad of ['0.1.14-beta.1', '01.1.1', '1.2.3\n', '1.2.3\nextra=value', '$(echo secret)']) {
       f.write('package.json', JSON.stringify({ version: bad })); assert.throws(() => checkVersions(f.root));
     }
+  } finally { f.close(); }
+});
+test('beta tags identify the distribution channel without changing native/package versions', () => {
+  const f = fixture();
+  try {
+    assert.deepEqual(checkVersions(f.root, `v${version}-beta.1`), { version, tag: `v${version}-beta.1` });
+    assert.equal(isBetaTag(`v${version}-beta.1`), true); assert.equal(isBetaTag(`v${version}`), false);
+    for (const tag of [`v${version}-beta.0`, `v${version}-beta.01`, `v${version}-beta.1\n`, 'v9.0.0-beta.1', `v${version}-rc.1`]) {
+      assert.throws(() => checkVersions(f.root, tag));
+    }
+    binaries(f); collectPackage(f.root, 'windows'); collectPackage(f.root, 'arch');
+    finalizePackages(f.root, commit, `v${version}-beta.1`);
+    const info = JSON.parse(readFileSync(join(f.root, 'release-assets/BUILD_INFO.json'), 'utf8'));
+    assert.equal(info.tag, `v${version}-beta.1`); assert.equal(info.channel, 'beta'); assert.equal(info.version, version);
   } finally { f.close(); }
 });
 test('package collection has an exact allowlist and never collects local user files', () => {
@@ -108,7 +122,18 @@ test('a missing release creates only a draft with a validated source commit', as
   assert.equal(result.draft, true); assert.equal(calls.length, 2);
   const payload = JSON.parse(calls[1].options.body);
   assert.equal(payload.draft, true); assert.equal(payload.target_commitish, commit);
+  assert.equal(payload.prerelease, false);
   assert.equal(calls[1].options.method, 'POST');
+});
+test('a beta creates only a prerelease draft and never claims latest stable', async () => {
+  let payload: any;
+  const request = async (_url: string, options: any) => {
+    if (!options.method) return new Response('', { status: 404 });
+    payload = JSON.parse(options.body); return Response.json(payload);
+  };
+  const result = await ensureDraft({ ...draftParams(), tag: `v${version}-beta.1`, request });
+  assert.equal(result.draft, true); assert.equal(payload.prerelease, true); assert.equal(payload.make_latest, 'false');
+  assert.match(payload.name, /бета-версия/);
 });
 test('published releases and API errors cannot be overwritten or mistaken for missing releases', async () => {
   for (const status of [200, 403, 500]) {
