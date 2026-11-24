@@ -1,0 +1,148 @@
+name: Готовые сборки Miku Focus
+
+# No branch pushes, PRs, schedules or larger runners. Private quotas still apply.
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: Какие сборки подготовить (ручной запуск не создаёт релиз)
+        type: choice
+        default: both
+        options: [both, windows, arch]
+      allow_private_build:
+        description: Разрешить расход квоты Actions в закрытом репозитории
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_BUILD_JOBS: '1'
+  CARGO_INCREMENTAL: '0'
+
+jobs:
+  check:
+    name: Версии, типы и тесты
+    if: ${{ !github.event.repository.private || vars.ENABLE_PRIVATE_BUILDS == 'true' || (github.event_name == 'workflow_dispatch' && inputs.allow_private_build) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - name: Проверить согласованность версий и тега
+        id: version
+        env:
+          EXPECTED_TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
+        run: node scripts/release.mjs check
+      - run: npm ci
+      - run: npm run check
+      - run: npm test
+
+  windows:
+    name: Windows x64 — установщик
+    needs: check
+    if: github.event_name == 'push' || inputs.platform != 'arch'
+    runs-on: windows-2022
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - uses: dtolnay/rust-toolchain@39008827e6b4319a349e9a42dfc90579dd25f1ca # stable
+      - name: Подготовить каталог сборки
+        run: New-Item -ItemType Directory -Force .build-tmp
+      - run: npm ci
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - run: npm run tauri build -- --ci --bundles nsis -- --locked
+      - run: node scripts/release.mjs collect windows
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: miku-focus-windows-x64
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+
+  arch:
+    name: Arch Linux x64 — пакет
+    needs: check
+    if: github.event_name == 'push' || inputs.platform != 'windows'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    container: archlinux:base-devel
+    steps:
+      # This updates ONLY a disposable CI container, never the user's Arch system.
+      - name: Зависимости одноразового контейнера Arch
+        run: |
+          df -h / /home
+          pacman -Syu --noconfirm --needed git nodejs npm rust python pkgconf webkit2gtk-4.1 gtk3 libappindicator librsvg xdotool gst-plugins-base gst-plugins-good
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Собирать и упаковывать без root
+        run: |
+          useradd --create-home builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          runuser -u builder -- bash -euo pipefail -c '
+            cd "$GITHUB_WORKSPACE"
+            mkdir -p .build-tmp
+            npm ci
+            cargo test --locked --manifest-path src-tauri/Cargo.toml
+            npm run tauri build -- --ci --no-bundle -- --locked
+            cd packaging
+            makepkg --noconfirm
+          '
+      - run: node scripts/release.mjs collect arch
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: miku-focus-arch-x64
+          path: release-assets/*
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+
+  draft:
+    name: Черновик релиза с готовыми файлами
+    needs: [check, windows, arch]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          pattern: miku-focus-*-x64
+          merge-multiple: true
+          path: release-assets
+      - name: Проверить комплект и вычислить SHA-256
+        run: node scripts/release.mjs finalize
+      - name: Создать или обновить только черновик
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXPECTED_TAG: ${{ needs.check.outputs.tag }}
+        run: node scripts/release.mjs publish

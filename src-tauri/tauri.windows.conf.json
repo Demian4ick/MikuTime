@@ -1,1 +1,14 @@
-{ "bundle": { "targets": ["nsis"], "windows": { "nsis": { "installMode": "currentUser" } } } }
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "targets": ["nsis"],
+    "windows": {
+      "nsis": {
+        "languages": ["Russian"],
+        "displayLanguageSelector": false,
+        "installMode": "currentUser"
+      },
+      "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true }
+    }
+  }
+}

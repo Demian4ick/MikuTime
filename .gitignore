@@ -5,6 +5,7 @@ src-tauri/target/
 src-tauri/gen/
 .local-test/
 artifacts/
+release-assets/
 *.log
 __pycache__/
 packaging/pkg/
