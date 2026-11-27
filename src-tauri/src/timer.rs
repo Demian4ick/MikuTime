@@ -206,6 +206,9 @@ pub struct Category {
     pub name: String,
     pub color: String,
     pub archived: bool,
+    /// Hidden from editing/selection, retained only to label recorded sessions.
+    #[serde(default)]
+    pub deleted: bool,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -293,6 +296,7 @@ impl Default for Database {
                     name: (*name).into(),
                     color: (*color).into(),
                     archived: false,
+                    deleted: false,
                 })
                 .collect(),
             selected_category: "programming".into(),
@@ -303,6 +307,75 @@ impl Default for Database {
 }
 
 impl Database {
+    pub fn select_category(&mut self, id: String) -> Result<(), String> {
+        if !self
+            .categories
+            .iter()
+            .any(|c| c.id == id && !c.archived && !c.deleted)
+        {
+            return Err("Категория недоступна".into());
+        }
+        self.selected_category = id;
+        Ok(())
+    }
+    pub fn save_category(&mut self, mut category: Category, now: i64) -> Result<(), String> {
+        category.name = category.name.trim().into();
+        if category.name.is_empty()
+            || category.name.chars().count() > 60
+            || category.color.len() != 7
+            || !category.color.starts_with('#')
+            || !category.color[1..].bytes().all(|b| b.is_ascii_hexdigit())
+            || category.deleted
+        {
+            return Err("Неверное имя или цвет категории".into());
+        }
+        let mut categories = self.categories.clone();
+        if category.id.is_empty() {
+            if categories.iter().filter(|c| !c.deleted).count() >= 200 {
+                return Err("Максимум 200 категорий".into());
+            }
+            // Tombstones reserve their IDs; even multiple creates at the same timestamp are unique.
+            let mut suffix = categories.len();
+            loop {
+                category.id = format!("custom-{now}-{suffix}");
+                if !categories.iter().any(|c| c.id == category.id) {
+                    break;
+                }
+                suffix += 1;
+            }
+            categories.push(category);
+        } else {
+            // A delayed autosave must never recreate or restore a deleted category.
+            let existing = categories
+                .iter_mut()
+                .find(|c| c.id == category.id && !c.deleted)
+                .ok_or("Категория удалена или недоступна")?;
+            *existing = category;
+        }
+        self.replace_categories(categories)
+    }
+    pub fn delete_category(&mut self, id: &str) -> Result<(), String> {
+        let mut categories = self.categories.clone();
+        let category = categories
+            .iter_mut()
+            .find(|c| c.id == id && !c.deleted)
+            .ok_or("Категория удалена или недоступна")?;
+        category.deleted = true;
+        category.archived = true;
+        self.replace_categories(categories)
+    }
+    fn replace_categories(&mut self, categories: Vec<Category>) -> Result<(), String> {
+        let selected = categories
+            .iter()
+            .find(|c| c.id == self.selected_category && !c.archived && !c.deleted)
+            .or_else(|| categories.iter().find(|c| !c.archived && !c.deleted))
+            .ok_or("Оставьте хотя бы одну активную категорию")?
+            .id
+            .clone();
+        self.selected_category = selected;
+        self.categories = categories;
+        Ok(())
+    }
     pub fn update_settings(&mut self, patch: SettingsPatch) -> Result<(), String> {
         let mut settings = self.settings.clone();
         macro_rules! apply {
@@ -793,6 +866,154 @@ mod tests {
         assert_eq!(d.categories[2].name, "Программирование");
         assert_eq!(d.categories[2].id, "programming");
         assert_eq!(d.categories[3].name, "My books");
+    }
+    fn new_category(name: &str) -> Category {
+        Category {
+            id: String::new(),
+            name: name.into(),
+            color: "#4cb9b1".into(),
+            archived: false,
+            deleted: false,
+        }
+    }
+    #[test]
+    fn category_legacy_data_and_creation_validation_are_backward_compatible() {
+        let category: Category = serde_json::from_str(
+            r##"{"id":"old","name":"Старая","color":"#4cb9b1","archived":false}"##,
+        )
+        .unwrap();
+        assert!(!category.deleted);
+        let mut d = db();
+        d.save_category(new_category("  Новая категория  "), 100)
+            .unwrap();
+        assert_eq!(d.categories.last().unwrap().name, "Новая категория");
+        let before = serde_json::to_value(&d).unwrap();
+        for invalid in [
+            new_category("  "),
+            new_category(&"я".repeat(61)),
+            Category {
+                color: "#ппп".into(),
+                ..new_category("Цвет")
+            },
+            Category {
+                deleted: true,
+                ..new_category("Удалённая")
+            },
+        ] {
+            assert!(d.save_category(invalid, 101).is_err());
+            assert_eq!(serde_json::to_value(&d).unwrap(), before);
+        }
+    }
+    #[test]
+    fn category_ids_are_unique_and_deletion_never_allows_stale_recreation() {
+        let mut d = db();
+        d.save_category(new_category("Новая"), 100).unwrap();
+        let stale = d.categories.last().unwrap().clone();
+        d.delete_category(&stale.id).unwrap();
+        d.save_category(new_category("Новая"), 100).unwrap();
+        assert_ne!(stale.id, d.categories.last().unwrap().id);
+        let before = serde_json::to_value(&d).unwrap();
+        assert!(d.save_category(stale.clone(), 100).is_err());
+        assert!(d.select_category(stale.id.clone()).is_err());
+        assert!(d.delete_category(&stale.id).is_err());
+        assert!(d
+            .save_category(
+                Category {
+                    id: "unknown".into(),
+                    ..new_category("Нет")
+                },
+                100
+            )
+            .is_err());
+        assert_eq!(serde_json::to_value(&d).unwrap(), before);
+    }
+    #[test]
+    fn deleting_categories_preserves_the_timer_and_history_in_every_state() {
+        for actions in [
+            vec![],
+            vec!["start"],
+            vec!["start", "pause"],
+            vec!["start", "finish"],
+            vec!["start", "reset"],
+        ] {
+            let mut d = db();
+            for (index, action) in actions.iter().enumerate() {
+                d.action(action, index as i64 * 10_000).unwrap();
+            }
+            let before = serde_json::to_value(&d).unwrap();
+            let metadata = d
+                .categories
+                .iter()
+                .find(|c| c.id == "programming")
+                .unwrap()
+                .clone();
+            d.delete_category("programming").unwrap();
+            let after = serde_json::to_value(&d).unwrap();
+            for field in ["timer", "sessions", "breaks", "settings"] {
+                assert_eq!(after[field], before[field], "{actions:?}: {field}");
+            }
+            assert_ne!(d.selected_category, "programming");
+            let deleted = d.categories.iter().find(|c| c.id == "programming").unwrap();
+            assert!(deleted.deleted && deleted.archived);
+            assert_eq!(
+                (&deleted.name, &deleted.color),
+                (&metadata.name, &metadata.color)
+            );
+        }
+        let mut d = db();
+        d.action("start", 0).unwrap();
+        d.tick(60_000);
+        assert_eq!(d.timer.status, Status::AwaitingDecision);
+        let before = serde_json::to_value(&d.timer).unwrap();
+        d.delete_category("programming").unwrap();
+        assert_eq!(serde_json::to_value(&d.timer).unwrap(), before);
+        d.action("extend", 60_001).unwrap();
+        d.action("finish", 70_000).unwrap();
+        assert_eq!(d.sessions[0].category_id, "programming");
+        assert_eq!(d.sessions[0].work_ms(), 69_999);
+    }
+    #[test]
+    fn last_active_category_cannot_be_deleted_or_archived_and_next_start_uses_valid_selection() {
+        let mut d = db();
+        for id in ["unity", "blender", "reading", "other"] {
+            d.delete_category(id).unwrap();
+        }
+        let before = serde_json::to_value(&d).unwrap();
+        assert!(d.delete_category("programming").is_err());
+        let mut last = d
+            .categories
+            .iter()
+            .find(|c| c.id == "programming")
+            .unwrap()
+            .clone();
+        last.archived = true;
+        assert!(d.save_category(last, 100).is_err());
+        assert_eq!(serde_json::to_value(&d).unwrap(), before);
+        d.save_category(new_category("Другая"), 100).unwrap();
+        let next = d.categories.last().unwrap().id.clone();
+        d.delete_category("programming").unwrap();
+        assert_eq!(d.selected_category, next);
+        d.action("start", 200).unwrap();
+        assert_eq!(d.timer.session.unwrap().category_id, next);
+    }
+    #[test]
+    fn deleted_category_metadata_survives_reload_and_does_not_use_editable_limit() {
+        let mut d = db();
+        for _ in 5..200 {
+            d.save_category(new_category("Категория"), 100).unwrap();
+        }
+        assert!(d.save_category(new_category("Лишняя"), 100).is_err());
+        d.delete_category("reading").unwrap();
+        d.save_category(new_category("Новая"), 100).unwrap();
+        assert_eq!(d.categories.len(), 201);
+        let restored: Database = serde_json::from_value(serde_json::to_value(&d).unwrap()).unwrap();
+        let deleted = restored
+            .categories
+            .iter()
+            .find(|c| c.id == "reading")
+            .unwrap();
+        assert!(deleted.deleted && deleted.archived);
+        assert_eq!(deleted.name, "Чтение");
     }
     #[test]
     fn bad_actions_do_not_start_timer() {

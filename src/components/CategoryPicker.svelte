@@ -5,7 +5,7 @@
   let open = $state(false);
   let host: HTMLDivElement;
   let trigger: HTMLButtonElement;
-  let items = $derived(categories.filter(category => !category.archived));
+  let items = $derived(categories.filter(category => !category.archived && !category.deleted));
   let selected = $derived(items.find(category => category.id === value));
   function close(restore = false) { open = false; if (restore) trigger.focus(); }
   async function show(last = false) {

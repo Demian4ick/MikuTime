@@ -3,7 +3,7 @@ export type Phase = 'Focus' | 'ShortBreak' | 'LongBreak';
 export type Emotion = 'Neutral' | 'Happy' | 'Calm' | 'Pleased' | 'Surprised' | 'Relief' | 'Worried' | 'Dissatisfied' | 'Angry' | 'Sad';
 export interface Segment { startMs: number; endMs: number }
 export interface Session { id: string; categoryId: string; startedAt: number; endedAt: number | null; segments: Segment[]; extensions: number; completed: boolean }
-export interface Category { id: string; name: string; color: string; archived: boolean }
+export interface Category { id: string; name: string; color: string; archived: boolean; deleted?: boolean }
 export interface Settings {
   focusMinutes: number; shortBreakMinutes: number; longBreakMinutes: number; sessionsBeforeLong: number;
   autoStart: boolean; volume: number; textSpeed: number; quietMode: boolean; talkativeness: 'Quiet' | 'Balanced' | 'Chatty' | 'Disabled';

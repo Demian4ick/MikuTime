@@ -5,3 +5,5 @@
 ```dataviewjs
 await dv.view("Дневник/Статистика/FocusMikuAll/Панель", { os: "linux" });
 ```
+
+В **Miku Focus → Настройки → Система** выберите папку **FocusMikuArch** для выгрузки. Панель прочитает `Miku Focus/Данные/linux.json` внутри неё.

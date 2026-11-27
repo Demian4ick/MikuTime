@@ -10,8 +10,9 @@
   import type { ArrowDirection } from '../lib/interaction';
   import { emotionFiles } from '../lib/emotions';
   import { emotionNames, talkativenessNames, idleStatusText } from '../lib/localization';
-  let { snapshot, save, status, categorySave, upload, resetArt, editDialogues, bindSfx, clearSound, useBuiltinAudio, preview, stopPreview, arrowSound, choiceSound, chooseObsidian, disconnectObsidian, refreshObsidian }: {
+  let { snapshot, save, status, categorySave, categoryDelete, upload, resetArt, editDialogues, bindSfx, clearSound, useBuiltinAudio, preview, stopPreview, arrowSound, choiceSound, chooseObsidian, disconnectObsidian, refreshObsidian }: {
     snapshot: Snapshot; save: (patch: SettingsPatch) => Promise<void>; status: SaveStatus; categorySave: (category: Category) => Promise<void>;
+    categoryDelete: (id: string) => Promise<void>;
     upload: (file: File, kind: string, id: string) => Promise<void>; resetArt: () => void; editDialogues: () => void;
     bindSfx: (event: string, sound: string | null) => Promise<void>; clearSound: (kind: SoundKind, id: string) => Promise<void>;
     useBuiltinAudio: (id?: string) => Promise<void>;
@@ -23,6 +24,11 @@
   let tab = $state('timer');
   let emotion = $state<Emotion>('Neutral');
   let name = $state(''); let color = $state('#4cb9b1');
+  let adding = $state(false), categoryError = $state('');
+  let nameMissing = $state(false);
+  let categoryNameInput = $state<HTMLInputElement>();
+  let categories = $derived(snapshot.categories.filter(category => !category.deleted));
+  let activeCategories = $derived(categories.filter(category => !category.archived).length);
   function changeTab(next: string) { choiceSound(); tab = next; }
   function change(patch: SettingsPatch) { void save(patch).catch(() => {}); }
   async function files(event: Event, kind: string, id: string) {
@@ -30,7 +36,19 @@
     try { for (const file of Array.from(input.files ?? [])) await upload(file, kind, kind === 'voice' ? file.name.replace(/\.[^.]+$/, '') : id); } catch {}
     input.value = '';
   }
-  async function addCategory() { if (!name.trim()) return; try { await categorySave({ id: '', name, color, archived: false }); name = ''; } catch {} }
+  async function addCategory() {
+    if (adding) return;
+    if (!name.trim()) {
+      nameMissing = true; categoryError = 'Сначала придумайте название категории.';
+      categoryNameInput?.focus();
+      return;
+    }
+    nameMissing = false;
+    adding = true; categoryError = '';
+    try { await categorySave({ id: '', name: name.trim(), color, archived: false }); name = ''; }
+    catch (error) { categoryError = String(error); }
+    finally { adding = false; }
+  }
 </script>
 
 <section class="settings scroll-area">
@@ -60,11 +78,20 @@
   {:else if tab === 'sounds'}
     <SoundSettings settings={snapshot.settings} {save} {upload} {bindSfx} {clearSound} {useBuiltinAudio} {preview} {stopPreview} {arrowSound} {choiceSound}/>
   {:else if tab === 'categories'}
-    <p class="muted">Архивирование не удаляет историю. Категория уже запущенной сессии не меняется.</p>
-    {#each snapshot.categories as category (category.id)}
-      <CategoryEditor {category} save={categorySave}/>
+    <h3>Создать категорию</h3>
+    <form class="category-editor" class:needs-name={nameMissing} novalidate onsubmit={e => { e.preventDefault(); void addCategory(); }}>
+      <input type="color" bind:value={color} disabled={adding} aria-label="Цвет новой категории"/>
+      <input bind:this={categoryNameInput} placeholder={nameMissing ? 'Придумайте название категории' : 'Название новой категории…'} value={name} oninput={e => { name = e.currentTarget.value; if (nameMissing && name.trim()) { nameMissing = false; categoryError = ''; } }} maxlength="60" required disabled={adding} aria-label="Новая категория" aria-invalid={nameMissing} aria-describedby="category-name-hint"/>
+      <button class="gloss" type="submit" disabled={adding || categories.length >= 200}>{adding ? 'Создание…' : '+ Создать'}</button>
+    </form>
+    {#if categoryError}<p id="category-name-hint" class="category-name-hint" class:missing={nameMissing} role="alert">{categoryError}</p>
+    {:else}<p id="category-name-hint" class="muted small-text">Например: Учёба или Рисование.</p>{/if}
+    {#if categories.length >= 200}<p class="muted">Максимум 200 категорий. Удалите ненужную, чтобы создать новую.</p>{/if}
+    <h3>Мои категории</h3>
+    <p class="muted">Удаление не стирает занятия из дневника. Для работы нужна хотя бы одна активная категория.</p>
+    {#each categories as category (category.id)}
+      <CategoryEditor {category} save={categorySave} remove={categoryDelete} lastActive={!category.archived && activeCategories === 1}/>
     {/each}
-    <form class="category-editor" onsubmit={e => { e.preventDefault(); void addCategory(); }}><input type="color" bind:value={color} aria-label="Цвет новой категории"/><input placeholder="Новая категория…" bind:value={name} maxlength="60" required aria-label="Новая категория"/><button class="gloss" type="submit">+ Добавить</button></form>
   {:else}
     <PanelSettings {snapshot} {save} {choiceSound}/>
     <label class="check-row"><input type="checkbox" checked={snapshot.settings.alwaysOnTop} onchange={e => change({ alwaysOnTop: e.currentTarget.checked })}/> Компактный помощник поверх других окон</label>
@@ -74,3 +101,12 @@
     <ObsidianSettings status={snapshot.obsidian} choose={chooseObsidian} disconnect={disconnectObsidian} refresh={refreshObsidian}/>
   {/if}
 </section>
+
+<style>
+  .category-name-hint { font-size: 12px; color: #98455c; }
+  .needs-name input:not([type=color]), .needs-name button { border-color: #ba6f89; animation: name-hint-pulse 1s ease-in-out 2; }
+  .needs-name input::placeholder { color: #98455c; opacity: 1; }
+  .category-name-hint.missing { font-weight: 600; }
+  @keyframes name-hint-pulse { 50% { box-shadow: 0 0 0 3px #cf8da644; } }
+  @media (prefers-reduced-motion: reduce) { .needs-name input:not([type=color]), .needs-name button { animation: none; } }
+</style>

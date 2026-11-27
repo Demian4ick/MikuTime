@@ -91,6 +91,22 @@ impl AppState {
         }
         result
     }
+    fn change_categories(
+        &self,
+        runtime: &mut Runtime,
+        change: impl FnOnce(&mut Database) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let previous = (
+            runtime.db.categories.clone(),
+            runtime.db.selected_category.clone(),
+        );
+        change(&mut runtime.db)?;
+        if let Err(error) = self.save(runtime) {
+            (runtime.db.categories, runtime.db.selected_category) = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
 }
 
 fn snapshot_value(state: &AppState, r: &Runtime) -> Value {
@@ -251,11 +267,7 @@ fn select_category(
     id: String,
 ) -> Result<(), String> {
     let mut r = state.runtime.lock().unwrap();
-    if !r.db.categories.iter().any(|c| c.id == id && !c.archived) {
-        return Err("Категория недоступна".into());
-    }
-    r.db.selected_category = id;
-    state.save(&mut r)?;
+    state.change_categories(&mut r, |db| db.select_category(id))?;
     drop(r);
     publish(&app);
     Ok(())
@@ -264,41 +276,22 @@ fn select_category(
 fn save_category(
     app: tauri::AppHandle,
     state: tauri::State<AppState>,
-    mut category: Category,
+    category: Category,
 ) -> Result<(), String> {
-    category.name = category.name.trim().into();
-    if category.name.is_empty()
-        || category.name.chars().count() > 60
-        || category.color.len() != 7
-        || !category.color.starts_with('#')
-        || !category.color[1..].bytes().all(|b| b.is_ascii_hexdigit())
-    {
-        return Err("Неверное имя или цвет категории".into());
-    }
     let mut r = state.runtime.lock().unwrap();
-    let mut categories = r.db.categories.clone();
-    if let Some(c) = categories.iter_mut().find(|c| c.id == category.id) {
-        *c = category;
-    } else {
-        if r.db.categories.len() >= 200 {
-            return Err("Максимум 200 категорий".into());
-        }
-        category.id = format!("custom-{}-{}", state.now(), categories.len());
-        categories.push(category);
-    }
-    if !categories
-        .iter()
-        .any(|c| c.id == r.db.selected_category && !c.archived)
-    {
-        r.db.selected_category = categories
-            .iter()
-            .find(|c| !c.archived)
-            .ok_or("Оставьте хотя бы одну активную категорию")?
-            .id
-            .clone();
-    }
-    r.db.categories = categories;
-    state.save(&mut r)?;
+    state.change_categories(&mut r, |db| db.save_category(category, state.now()))?;
+    drop(r);
+    publish(&app);
+    Ok(())
+}
+#[tauri::command]
+fn delete_category(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    id: String,
+) -> Result<(), String> {
+    let mut r = state.runtime.lock().unwrap();
+    state.change_categories(&mut r, |db| db.delete_category(&id))?;
     drop(r);
     publish(&app);
     Ok(())
@@ -969,6 +962,14 @@ pub fn run() {
             app.manage(AppState { drag: Mutex::new(None), resize: Mutex::new(None), runtime: Mutex::new(runtime), wake: Condvar::new(), store, obsidian, panel, epoch, clock: Instant::now() });
             let state = app.state::<AppState>(); state.save(&mut state.runtime.lock().unwrap()).map_err(std::io::Error::other)?;
 
+            // WebView2 can invoke commands while a window is being built. Both windows
+            // must be created only after AppState exists, never by Tauri before setup.
+            for config in app.config().app.windows.clone() {
+                tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?
+                    .visible(false)
+                    .build()?;
+            }
+
             use tauri::menu::{Menu, MenuItem};
             let show = MenuItem::with_id(app, "main", "Открыть Miku Focus", true, None::<&str>)?;
             let companion = MenuItem::with_id(app, "background", "Свернуть в выбранный режим", true, None::<&str>)?;
@@ -1020,7 +1021,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![get_state, timer_action, claim_reaction, request_reaction,
-            update_settings, set_focus_minutes, adjust_focus_minutes, select_category, save_category, import_asset, reset_art, bind_sfx, clear_sound, use_builtin_audio, get_dialogues, save_dialogues,
+            update_settings, set_focus_minutes, adjust_focus_minutes, select_category, save_category, delete_category, import_asset, reset_art, bind_sfx, clear_sound, use_builtin_audio, get_dialogues, save_dialogues,
             export_data, choose_obsidian_folder, disconnect_obsidian, refresh_obsidian, window_action, complete_quit, cancel_quit, drag_companion, resize_companion, adjust_companion_size, save_companion_geometry])
         .run(tauri::generate_context!())
         .expect("Miku Focus startup failed; user data has not been discarded");

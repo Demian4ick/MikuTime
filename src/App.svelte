@@ -5,6 +5,7 @@
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import type { Snapshot, SettingsPatch, Category, Emotion, DialogueFile, ObsidianExportStatus } from './lib/types';
   import { AutoSaver, type SaveStatus } from './lib/autosave';
+  import { CategoryWrites } from './lib/category-writes';
   import { EmotionManager } from './lib/emotions';
   import { emotionNames } from './lib/localization';
   import { ReactionController } from './lib/reactions';
@@ -41,7 +42,7 @@
   let goalRequestedDay = '';
   let saveStatus = $state<SaveStatus>('idle');
   const settingsSaver = new AutoSaver<SettingsPatch>(patch => call('update_settings', { patch }), value => saveStatus = value);
-  const categorySavers = new Map<string, AutoSaver<Category>>();
+  const categoryWrites = new CategoryWrites(category => call('save_category', { category }), id => call('delete_category', { id }));
   let durationWrites: Promise<void> = Promise.resolve();
   let soundWrites: Promise<void> = Promise.resolve();
   const effects = new SfxManager(() => snapshot?.settings ?? null, convertFileSrc, notify);
@@ -69,7 +70,7 @@
     void (async () => {
       await soundWrites;
       if (action === 'background') await settingsSaver.flush();
-      if (action === 'quit') await Promise.all([settingsSaver.flush(), durationWrites, resizeReady, ...[...categorySavers.values()].map(saver => saver.flush())]);
+      if (action === 'quit') await Promise.all([settingsSaver.flush(), durationWrites, resizeReady, categoryWrites.flush()]);
       await call('window_action', { action });
     })().catch(() => {});
     context = false;
@@ -141,7 +142,7 @@
     controller?.dispose(); controller = null; stopPreview(); effects.stop(); goodbyeVoice.stop();
     try {
       await closePresentation(
-        async () => { await Promise.all([soundWrites, settingsSaver.flush(), durationWrites, resizeReady, ...[...categorySavers.values()].map(saver => saver.flush())]); },
+        async () => { await Promise.all([soundWrites, settingsSaver.flush(), durationWrites, resizeReady, categoryWrites.flush()]); },
         async () => {
           if (document.hidden) return;
           const limit = setTimeout(() => effects.stop(), exitAudioLimitMs);
@@ -181,9 +182,9 @@
     return request;
   }
   function categorySave(category: Category) {
-    if (!categorySavers.has(category.id)) categorySavers.set(category.id, new AutoSaver(value => call('save_category', { category: value })));
-    return categorySavers.get(category.id)!.save(category);
+    return categoryWrites.save(category);
   }
+  function categoryDelete(id: string) { return categoryWrites.delete(id); }
   function queueSound(write: () => Promise<void>) {
     const request = soundWrites.then(write);
     soundWrites = request.catch(() => {});
@@ -357,10 +358,10 @@
   <main class="app-shell" class:closing inert={closing && !farewellVisible}>
     <header class="app-header" inert={closing}><a class="brand" href="#focus" onclick={() => navigate('focus')}><span class="brand-flower">✿</span><span>Miku <b>Focus</b></span></a><div class="header-actions"><button class="header-button" class:muted={snapshot?.settings.quietMode} title="Тихий режим" aria-label="Переключить тихий режим" onclick={() => { if (snapshot) void save({ quietMode: !snapshot.settings.quietMode }).catch(() => {}); }}>{snapshot?.settings.quietMode ? '♪̸' : '♫'}</button><button class="gloss small" onclick={() => windowAction('background')}>{snapshot?.settings.backgroundMode === 'Panel' ? 'Свернуть в панель' : 'Помощник'} <span>↗</span></button><button class="header-button" aria-label="Сохранить и выйти" title="Сохранить и выйти" onclick={() => windowAction('quit')}>⏻</button></div></header>
     <nav class="main-tabs" inert={closing}><button class:active={page === 'focus'} onclick={() => navigate('focus')}>♡ Комната фокуса</button><button class:active={page === 'diary'} onclick={() => navigate('diary')}>✧ Дневник занятий</button><button class:active={page === 'settings'} onclick={() => navigate('settings')}>Настройки</button><span class="nav-date">{new Date(snapshot?.now ?? Date.now()).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })}</span></nav>
-    {#if fatal}<section class="fatal-error"><h2>Не удалось открыть локальные данные</h2><p>{fatal}</p><p>Файлы не удалены. Для запуска используйте <code>npm run tauri dev</code>, не браузер.</p></section>
+    {#if fatal}<section class="fatal-error"><h2>Не удалось запустить Miku Focus</h2><p>{fatal}</p><p>Данные не удалены. Полностью закройте приложение и попробуйте открыть его снова. Если ошибка повторяется, сообщите о ней на странице проекта.</p></section>
     {:else if !snapshot}<div class="loading">Мику уже идёт… ♡</div>
     {:else if page === 'diary' && isActive}<Diary {snapshot} {exportData} {arrowSound} {choiceSound}/>
-    {:else if page === 'settings' && isActive}<Settings {snapshot} {save} status={saveStatus} {categorySave} {upload} resetArt={() => { void call('reset_art').catch(() => {}); }} {editDialogues} {bindSfx} {clearSound} {useBuiltinAudio} {preview} {stopPreview} {arrowSound} {choiceSound} {chooseObsidian} {disconnectObsidian} {refreshObsidian}/>
+    {:else if page === 'settings' && isActive}<Settings {snapshot} {save} status={saveStatus} {categorySave} {categoryDelete} {upload} resetArt={() => { void call('reset_art').catch(() => {}); }} {editDialogues} {bindSfx} {clearSound} {useBuiltinAudio} {preview} {stopPreview} {arrowSound} {choiceSound} {chooseObsidian} {disconnectObsidian} {refreshObsidian}/>
     {:else if page === 'focus'}
       <section class="focus-scene" inert={closing} style:background-image={`linear-gradient(90deg,rgba(224,255,247,.18),rgba(243,255,251,.12) 62%,rgba(236,255,249,.85)),url("${background}")`}>
         <div class="scene-decoration heart-one">♡</div><div class="scene-decoration heart-two">✧</div>

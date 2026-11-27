@@ -41,6 +41,14 @@ test('identically named categories stay separate across installations', () => {
   const model = mikuModel([snapshot(), snapshot('windows')], '30', now);
   assert.equal(model.categories.length, 2); assert.notEqual(model.categories[0].key, model.categories[1].key);
 });
+test('deleted category metadata still labels and counts historical work in Obsidian', () => {
+  const data = snapshot();
+  const deleted = { ...data, categories: data.categories.map(category => ({ ...category, archived: true, deleted: true })) };
+  assert.equal(mikuSnapshot(deleted, 'linux'), deleted);
+  const before = mikuModel([data], 'all', now), after = mikuModel([deleted], 'all', now);
+  assert.equal(after.workMs, before.workMs);
+  assert.deepEqual(after.categories, before.categories);
+});
 test('a segment crossing midnight is split by local days, not by session start', () => {
   const midnight = mikuMidnight(now), data = snapshot();
   data.sessions[0].segments = [segment(midnight - 15 * minute, midnight + 10 * minute)];

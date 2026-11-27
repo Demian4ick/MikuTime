@@ -831,6 +831,31 @@ mod tests {
         assert_eq!(read(&service)["categories"][0]["name"], "Новая категория");
         assert_eq!(fs::read_to_string(stale).unwrap(), "чужой файл");
     }
+    #[test]
+    fn deleted_category_keeps_historical_labels_and_work_in_exports() {
+        let f = Fixture::new();
+        let vault = f.folder("vault");
+        let service = f.service("data", "linux");
+        service.configure(Some(&vault)).unwrap();
+        let mut db = Database::default();
+        db.action("start", 1000).unwrap();
+        db.action("reset", 11000).unwrap();
+        service.enqueue(&db.checkpoint(12000), false);
+        let before = read(&service);
+        db.delete_category("programming").unwrap();
+        service.enqueue(&db.checkpoint(12000), false);
+        let after = read(&service);
+        assert_eq!(after["sessions"], before["sessions"]);
+        let category = after["categories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["id"] == "programming")
+            .unwrap();
+        assert_eq!(category["name"], "Программирование");
+        assert_eq!(category["color"], "#55aebe");
+        assert_eq!(category["deleted"], true);
+    }
 
     #[cfg(unix)]
     #[test]

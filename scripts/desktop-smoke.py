@@ -20,6 +20,8 @@ p.add_argument('--full', action='store_true', help='Wait for a real one-minute f
 p.add_argument('--x11', action='store_true', help='Private Xvfb/DBus session; not a Wayland verification')
 p.add_argument('--obsidian-only', action='store_true', help='Check only the native export-folder connection')
 p.add_argument('--panel-only', action='store_true', help='Check the owned Rust stream and panel window mode')
+p.add_argument('--categories-only', action='store_true', help='Private category creation/deletion and historical labels')
+p.add_argument('--startup-only', action='store_true', help='Check initial state/dialogues and both windows without a reload')
 p.add_argument('--quit-only', choices=['main', 'companion'], help='Check farewell and bounded shutdown only')
 p.add_argument('--quiet-exit', action='store_true', help='Check the farewell with Quiet Mode enabled')
 p.add_argument('--pointer-helper', type=Path, help='Existing Wayland virtual-pointer test helper, only for this owned window')
@@ -307,6 +309,26 @@ if args.quit_only:
         click('Настройки')  # Exit must restore the ordinary dialogue even from another tab.
     finish_exit_checks()
     check('farewell leaves timer and recorded history unchanged', (state()['sessions'], state()['breaks'], state()['timer']) == before)
+    (args.data.parent / 'smoke-results.json').write_text(json.dumps({'backend': 'X11/Xvfb' if args.x11 else 'Wayland/Hyprland', 'checks': checks, 'count': len(checks)}))
+    raise SystemExit(0)
+
+if args.startup_only:
+    check('startup loads dialogues and state without a reload', 'С возвращением, сэмпай' in all_text(app) and 'state not managed' not in all_text(app) and 'Не удалось запустить' not in all_text(app))
+    click('Настройки'); click('Звуки'); click('Голоса (21)')
+    check('dialogue catalogue is available immediately after startup', find(app, lambda o: o.get_name() == 'Голоса персонажа') is not None or 'Голоса и реплики' in all_text(app))
+    click('Помощник ↗')
+    check('the second WebView starts with the same registered state', find(app, lambda o: o.get_name() == 'Мику: клик — открыть, перетаскивание — переместить') is not None and 'state not managed' not in all_text(app))
+    click('Мику: клик — открыть, перетаскивание — переместить')
+    click('♡ Комната фокуса'); click('▶ Начать работу')
+    check('timer works after the initial handshake', persisted(lambda s: s['timer']['status'] == 'Focus'))
+    click('Ⅱ Пауза'); click('Сохранить и выйти')
+    (args.data.parent / 'smoke-results.json').write_text(json.dumps({'backend': 'X11/Xvfb' if args.x11 else 'Wayland/Hyprland', 'checks': checks, 'count': len(checks)}))
+    raise SystemExit(0)
+
+if args.categories_only:
+    from category_smoke import run
+    run(app, data=args.data, click=click, find=find, keys=keys, entry=entry, entry_text=entry_text,
+        disabled=disabled, state=state, persisted=persisted, check=check, all_text=all_text, screenshot=screenshot)
     (args.data.parent / 'smoke-results.json').write_text(json.dumps({'backend': 'X11/Xvfb' if args.x11 else 'Wayland/Hyprland', 'checks': checks, 'count': len(checks)}))
     raise SystemExit(0)
 
