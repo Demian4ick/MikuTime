@@ -4,6 +4,22 @@
 
 [**⬇ Скачать бета-версию**](https://github.com/Demian4ick/MikuTime/releases/tag/v0.1.13-beta.3) · [Все версии](https://github.com/Demian4ick/MikuTime/releases) · [Сообщить об ошибке](https://github.com/Demian4ick/MikuTime/issues)
 
+![Комната фокуса: Мику, выбор категории и таймер работы](docs/screenshots/focus.webp)
+
+<details>
+<summary><b>Ещё скриншоты: статистика, календарь, озвучка и помощник</b></summary>
+
+Linux · beta.3. Статистика показана на демонстрационных данных. Нажмите на изображение, чтобы открыть его целиком.
+
+<table>
+  <tr><th>Статистика занятий</th><th>Календарь активности</th></tr>
+  <tr><td><a href="docs/screenshots/statistics.webp"><img src="docs/screenshots/statistics.webp" alt="График рабочего времени и статистика по категориям" width="460"></a></td><td><a href="docs/screenshots/calendar.webp"><img src="docs/screenshots/calendar.webp" alt="Календарь активности и история выбранного дня" width="460"></a></td></tr>
+  <tr><th>Встроенная озвучка</th><th>Компактный помощник</th></tr>
+  <tr><td><a href="docs/screenshots/voices.webp"><img src="docs/screenshots/voices.webp" alt="Настройки 21 голосовой записи: прослушивание и замена" width="460"></a></td><td align="center"><a href="docs/screenshots/companion.webp"><img src="docs/screenshots/companion.webp" alt="Пиксельная Мику с работающим таймером в компактном режиме" width="240"></a></td></tr>
+</table>
+
+</details>
+
 ## Установка
 
 Готовые файлы находятся в **Assets / Ресурсы** на странице беты. Node.js и Rust для установки не нужны; архивы **Source code** предназначены для разработки.
