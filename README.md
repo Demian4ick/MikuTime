@@ -8,8 +8,6 @@
 
 ## Скриншоты
 
-Linux · beta.3. Статистика показана на демонстрационных данных. Нажмите на изображение, чтобы открыть его целиком.
-
 <table>
   <tr><th>Статистика занятий</th><th>Календарь активности</th></tr>
   <tr><td><a href="docs/screenshots/statistics.webp"><img src="docs/screenshots/statistics.webp" alt="График рабочего времени и статистика по категориям" width="460"></a></td><td><a href="docs/screenshots/calendar.webp"><img src="docs/screenshots/calendar.webp" alt="Календарь активности и история выбранного дня" width="460"></a></td></tr>

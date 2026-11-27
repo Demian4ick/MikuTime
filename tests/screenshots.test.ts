@@ -11,6 +11,7 @@ test('README shows the gallery immediately in a labelled 2×2 grid with full-siz
   assert.ok(readme.indexOf('⬇ Скачать бета-версию') < readme.indexOf('docs/screenshots/focus.webp'));
   assert.ok(readme.indexOf('docs/screenshots/focus.webp') < start);
   const gallery = readme.slice(start, end);
+  assert.match(gallery, /^## Скриншоты\s+<table>/);
   assert.equal((gallery.match(/<img\b/g) ?? []).length, 4);
   assert.equal((gallery.match(/<tr>/g) ?? []).length, 4);
   assert.equal((gallery.match(/<th>/g) ?? []).length, 4);
@@ -26,7 +27,6 @@ test('README screenshots are complete, small lossless WebP files without private
   const names = ['calendar', 'companion', 'focus', 'statistics', 'voices'];
   assert.deepEqual(readdirSync(root).sort(), ['README.md', ...names.map(name => `${name}.webp`)].sort());
   const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
-  assert.match(readme, /демонстрационных данных/);
   let total = 0;
   for (const name of names) {
     assert.ok(readme.includes(`docs/screenshots/${name}.webp`), name);
