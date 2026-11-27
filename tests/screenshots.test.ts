@@ -2,6 +2,25 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
 
+test('README shows the gallery immediately in a labelled 2×2 grid with full-size links', () => {
+  const readme = readFileSync(new URL('../README.md', import.meta.url), 'utf8');
+  const start = readme.indexOf('## Скриншоты');
+  const end = readme.indexOf('## Установка');
+  assert.ok(start > 0 && end > start);
+  assert.doesNotMatch(readme, /<\/?(?:details|summary)\b/i);
+  assert.ok(readme.indexOf('⬇ Скачать бета-версию') < readme.indexOf('docs/screenshots/focus.webp'));
+  assert.ok(readme.indexOf('docs/screenshots/focus.webp') < start);
+  const gallery = readme.slice(start, end);
+  assert.equal((gallery.match(/<img\b/g) ?? []).length, 4);
+  assert.equal((gallery.match(/<tr>/g) ?? []).length, 4);
+  assert.equal((gallery.match(/<th>/g) ?? []).length, 4);
+  assert.equal((gallery.match(/<td\b/g) ?? []).length, 4);
+  for (const name of ['statistics', 'calendar', 'voices', 'companion']) {
+    assert.ok(gallery.includes(`href="docs/screenshots/${name}.webp"`));
+    assert.ok(gallery.includes(`src="docs/screenshots/${name}.webp"`));
+  }
+});
+
 test('README screenshots are complete, small lossless WebP files without private metadata', () => {
   const root = new URL('../docs/screenshots/', import.meta.url);
   const names = ['calendar', 'companion', 'focus', 'statistics', 'voices'];

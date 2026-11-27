@@ -6,8 +6,7 @@
 
 ![Комната фокуса: Мику, выбор категории и таймер работы](docs/screenshots/focus.webp)
 
-<details>
-<summary><b>Ещё скриншоты: статистика, календарь, озвучка и помощник</b></summary>
+## Скриншоты
 
 Linux · beta.3. Статистика показана на демонстрационных данных. Нажмите на изображение, чтобы открыть его целиком.
 
@@ -17,8 +16,6 @@ Linux · beta.3. Статистика показана на демонстрац
   <tr><th>Встроенная озвучка</th><th>Компактный помощник</th></tr>
   <tr><td><a href="docs/screenshots/voices.webp"><img src="docs/screenshots/voices.webp" alt="Настройки 21 голосовой записи: прослушивание и замена" width="460"></a></td><td align="center"><a href="docs/screenshots/companion.webp"><img src="docs/screenshots/companion.webp" alt="Пиксельная Мику с работающим таймером в компактном режиме" width="240"></a></td></tr>
 </table>
-
-</details>
 
 ## Установка
 
