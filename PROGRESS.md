@@ -2,6 +2,8 @@
 
 Miku Focus — бета для Windows 10/11 x64 и Arch Linux x86_64.
 
+Готовые установщики: [beta.4](https://github.com/Demian4ick/MikuTime/releases/tag/v0.1.13-beta.4).
+
 ## Возможности
 
 - Таймер работы и отдыха, пауза, неограниченные продления.
