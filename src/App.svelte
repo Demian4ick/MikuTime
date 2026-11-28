@@ -6,6 +6,7 @@
   import type { Snapshot, SettingsPatch, Category, Emotion, DialogueFile, ObsidianExportStatus } from './lib/types';
   import { AutoSaver, type SaveStatus } from './lib/autosave';
   import { CategoryWrites } from './lib/category-writes';
+  import { AppearanceWrites, applyTheme, prepareWallpaper, wallpaperLimit } from './lib/appearance';
   import { EmotionManager } from './lib/emotions';
   import { emotionNames } from './lib/localization';
   import { ReactionController } from './lib/reactions';
@@ -45,6 +46,8 @@
   const categoryWrites = new CategoryWrites(category => call('save_category', { category }), id => call('delete_category', { id }));
   let durationWrites: Promise<void> = Promise.resolve();
   let soundWrites: Promise<void> = Promise.resolve();
+  const appearanceWrites = new AppearanceWrites();
+  $effect(() => { if (snapshot) applyTheme(snapshot.settings.theme); });
   const effects = new SfxManager(() => snapshot?.settings ?? null, convertFileSrc, notify);
   const soundPreview = new SoundPreview(notify);
   const goodbyeVoice = new VoiceManager('Прощание');
@@ -56,7 +59,7 @@
   let farewellVisible = $state(false);
 
   function notify(text: string) { toast = text; clearTimeout(toastTimeout); toastTimeout = setTimeout(() => toast = '', 12000); }
-  async function call<T>(command: string, args?: Record<string, unknown>): Promise<T> {
+  async function call<T>(command: string, args?: Record<string, unknown> | Uint8Array): Promise<T> {
     try { return await invoke<T>(command, args); } catch (e) { notify(String(e)); throw e; }
   }
   function act(action: string) {
@@ -69,8 +72,8 @@
   function windowAction(action: string) {
     void (async () => {
       await soundWrites;
-      if (action === 'background') await settingsSaver.flush();
-      if (action === 'quit') await Promise.all([settingsSaver.flush(), durationWrites, resizeReady, categoryWrites.flush()]);
+      if (action === 'background') await Promise.all([settingsSaver.flush(), appearanceWrites.flush()]);
+      if (action === 'quit') await Promise.all([settingsSaver.flush(), durationWrites, resizeReady, categoryWrites.flush(), appearanceWrites.flush()]);
       await call('window_action', { action });
     })().catch(() => {});
     context = false;
@@ -142,7 +145,7 @@
     controller?.dispose(); controller = null; stopPreview(); effects.stop(); goodbyeVoice.stop();
     try {
       await closePresentation(
-        async () => { await Promise.all([soundWrites, settingsSaver.flush(), durationWrites, resizeReady, categoryWrites.flush()]); },
+        async () => { await Promise.all([soundWrites, settingsSaver.flush(), durationWrites, resizeReady, categoryWrites.flush(), appearanceWrites.flush()]); },
         async () => {
           if (document.hidden) return;
           const limit = setTimeout(() => effects.stop(), exitAudioLimitMs);
@@ -202,8 +205,20 @@
     await soundPreview.play(kind, id, snapshot.settings, convertFileSrc);
   }
   function upload(file: File, kind: string, id: string): Promise<void> {
-    return kind === 'voice' || kind === 'sfx' ? queueSound(() => importFile(file, kind, id)) : importFile(file, kind, id);
+    return kind === 'voice' || kind === 'sfx' ? queueSound(() => importFile(file, kind, id)) : queueAppearance(() => importFile(file, kind, id));
   }
+  function queueAppearance(write: () => Promise<void>) {
+    return appearanceWrites.run(write);
+  }
+  function uploadWallpapers(files: File[]) {
+    return queueAppearance(async () => {
+      if ((snapshot?.settings.wallpapers.length ?? 0) + files.length > wallpaperLimit) throw new Error('В галерее может быть не больше 100 обоев.');
+      for (const file of files) await call<void>('import_wallpaper', await prepareWallpaper(file));
+    });
+  }
+  function selectWallpaper(id: string | null) { return queueAppearance(() => call<void>('select_wallpaper', { id })); }
+  function removeWallpaper(id: string) { return queueAppearance(() => call<void>('remove_wallpaper', { id })); }
+  function resetArt() { void queueAppearance(() => call<void>('reset_art')).catch(() => {}); }
   async function importFile(file: File, kind: string, id: string) {
     try {
       if (file.size > 20 * 1024 * 1024) throw new Error('Файл больше 20 МиБ.');
@@ -361,9 +376,9 @@
     {#if fatal}<section class="fatal-error"><h2>Не удалось запустить Miku Focus</h2><p>{fatal}</p><p>Данные не удалены. Полностью закройте приложение и попробуйте открыть его снова. Если ошибка повторяется, сообщите о ней на странице проекта.</p></section>
     {:else if !snapshot}<div class="loading">Мику уже идёт… ♡</div>
     {:else if page === 'diary' && isActive}<Diary {snapshot} {exportData} {arrowSound} {choiceSound}/>
-    {:else if page === 'settings' && isActive}<Settings {snapshot} {save} status={saveStatus} {categorySave} {categoryDelete} {upload} resetArt={() => { void call('reset_art').catch(() => {}); }} {editDialogues} {bindSfx} {clearSound} {useBuiltinAudio} {preview} {stopPreview} {arrowSound} {choiceSound} {chooseObsidian} {disconnectObsidian} {refreshObsidian}/>
+    {:else if page === 'settings' && isActive}<Settings {snapshot} {save} status={saveStatus} {categorySave} {categoryDelete} {upload} {uploadWallpapers} {selectWallpaper} {removeWallpaper} {resetArt} {editDialogues} {bindSfx} {clearSound} {useBuiltinAudio} {preview} {stopPreview} {arrowSound} {choiceSound} {chooseObsidian} {disconnectObsidian} {refreshObsidian}/>
     {:else if page === 'focus'}
-      <section class="focus-scene" inert={closing} style:background-image={`linear-gradient(90deg,rgba(224,255,247,.18),rgba(243,255,251,.12) 62%,rgba(236,255,249,.85)),url("${background}")`}>
+      <section class="focus-scene" inert={closing} style:background-image={`var(--scene-tint),url("${background}")`}>
         <div class="scene-decoration heart-one">♡</div><div class="scene-decoration heart-two">✧</div>
         <button class="main-character" data-hover-exclude onclick={() => requestReaction('touch')} aria-label="Поговорить с Мику">
           {#if transition}<img class="sprite-old" src={previousSprite} alt="" draggable="false"/>{/if}<img class="sprite-current" src={sprite} alt={`Мику: ${emotionNames[visual.emotion]}`} draggable="false"/>

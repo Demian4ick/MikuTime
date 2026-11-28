@@ -22,6 +22,8 @@ p.add_argument('--obsidian-only', action='store_true', help='Check only the nati
 p.add_argument('--panel-only', action='store_true', help='Check the owned Rust stream and panel window mode')
 p.add_argument('--categories-only', action='store_true', help='Private category creation/deletion and historical labels')
 p.add_argument('--startup-only', action='store_true', help='Check initial state/dialogues and both windows without a reload')
+p.add_argument('--appearance-only', action='store_true', help='Private wallpaper gallery and dark-theme controls')
+p.add_argument('--appearance-reload', action='store_true', help='Verify appearance persistence in the same private profile')
 p.add_argument('--quit-only', choices=['main', 'companion'], help='Check farewell and bounded shutdown only')
 p.add_argument('--quiet-exit', action='store_true', help='Check the farewell with Quiet Mode enabled')
 p.add_argument('--pointer-helper', type=Path, help='Existing Wayland virtual-pointer test helper, only for this owned window')
@@ -310,6 +312,12 @@ if args.quit_only:
     finish_exit_checks()
     check('farewell leaves timer and recorded history unchanged', (state()['sessions'], state()['breaks'], state()['timer']) == before)
     (args.data.parent / 'smoke-results.json').write_text(json.dumps({'backend': 'X11/Xvfb' if args.x11 else 'Wayland/Hyprland', 'checks': checks, 'count': len(checks)}))
+    raise SystemExit(0)
+
+if args.appearance_only or args.appearance_reload:
+    from appearance_smoke import run
+    run(args, app, click=click, find=find, keys=keys, state=state, persisted=persisted, check=check, all_text=all_text, screenshot=screenshot)
+    (args.data.parent / ('appearance-reload-results.json' if args.appearance_reload else 'appearance-results.json')).write_text(json.dumps({'backend': 'X11/Xvfb', 'checks': checks, 'count': len(checks)}))
     raise SystemExit(0)
 
 if args.startup_only:

@@ -25,6 +25,22 @@ pub enum BackgroundMode {
     Panel,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub enum Theme {
+    #[default]
+    Light,
+    Dark,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Wallpaper {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub thumbnail: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
@@ -43,6 +59,8 @@ pub struct Settings {
     pub companion_position: Option<(i32, i32)>,
     pub companion_size: Option<(u32, u32)>,
     pub background: Option<String>,
+    pub wallpapers: Vec<Wallpaper>,
+    pub theme: Theme,
     pub sprites: BTreeMap<String, String>,
     pub voices: BTreeMap<String, String>,
     pub sfx: BTreeMap<String, String>,
@@ -69,6 +87,8 @@ impl Default for Settings {
             companion_position: None,
             companion_size: None,
             background: None,
+            wallpapers: Vec::new(),
+            theme: Theme::Light,
             sprites: BTreeMap::new(),
             voices: crate::audio::default_voices(),
             sfx: BTreeMap::new(),
@@ -79,6 +99,52 @@ impl Default for Settings {
     }
 }
 impl Settings {
+    pub fn migrate_wallpapers(&mut self) {
+        if let Some(path) = self.background.clone() {
+            if !self.wallpapers.iter().any(|item| item.path == path) {
+                self.wallpapers.push(Wallpaper {
+                    id: "legacy-background".into(),
+                    name: "Свой фон".into(),
+                    path,
+                    thumbnail: None,
+                });
+            }
+        }
+    }
+    pub fn add_wallpaper(&mut self, wallpaper: Wallpaper) -> Result<(), String> {
+        let mut next = self.clone();
+        next.background = Some(wallpaper.path.clone());
+        next.wallpapers.push(wallpaper);
+        next.validate()?;
+        *self = next;
+        Ok(())
+    }
+    pub fn select_wallpaper(&mut self, id: Option<&str>) -> Result<(), String> {
+        self.background = match id {
+            None => None,
+            Some(id) => Some(
+                self.wallpapers
+                    .iter()
+                    .find(|item| item.id == id)
+                    .ok_or("Обои не найдены в галерее")?
+                    .path
+                    .clone(),
+            ),
+        };
+        Ok(())
+    }
+    pub fn remove_wallpaper(&mut self, id: &str) -> Result<(), String> {
+        let index = self
+            .wallpapers
+            .iter()
+            .position(|item| item.id == id)
+            .ok_or("Обои не найдены в галерее")?;
+        let removed = self.wallpapers.remove(index);
+        if self.background.as_ref() == Some(&removed.path) {
+            self.background = None;
+        }
+        Ok(())
+    }
     pub fn migrate_sound_defaults(&mut self) {
         if self.sound_defaults_version >= 2 {
             return;
@@ -97,6 +163,20 @@ impl Settings {
         self.sound_defaults_version = 2;
     }
     pub fn validate(&self) -> Result<(), String> {
+        let mut wallpaper_ids = std::collections::BTreeSet::new();
+        if self.wallpapers.len() > 100
+            || self.wallpapers.iter().any(|item| {
+                !crate::audio::valid_id(&item.id)
+                    || !wallpaper_ids.insert(&item.id)
+                    || item.name.trim().is_empty()
+                    || item.name.chars().count() > 80
+                    || item.name.chars().any(char::is_control)
+                    || item.path.is_empty()
+                    || item.thumbnail.as_ref().is_some_and(|path| path.is_empty())
+            })
+        {
+            return Err("Неверные данные галереи обоев (максимум 100 изображений)".into());
+        }
         if !(1..=480).contains(&self.focus_minutes)
             || !(1..=180).contains(&self.short_break_minutes)
             || !(1..=180).contains(&self.long_break_minutes)
@@ -197,6 +277,7 @@ pub struct SettingsPatch {
     pub daily_goal_minutes: Option<u32>,
     pub always_on_top: Option<bool>,
     pub background_mode: Option<BackgroundMode>,
+    pub theme: Option<Theme>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -394,7 +475,8 @@ impl Database {
             talkativeness,
             daily_goal_minutes,
             always_on_top,
-            background_mode
+            background_mode,
+            theme
         );
         settings.validate()?;
         let minutes = settings.focus_minutes;

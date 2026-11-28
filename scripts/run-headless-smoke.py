@@ -16,6 +16,7 @@ parser.add_argument('--obsidian-only', action='store_true', help='Check only the
 parser.add_argument('--panel-only', action='store_true', help='Check panel mode and the native CLI')
 parser.add_argument('--categories-only', action='store_true', help='Create/delete categories using only a private profile')
 parser.add_argument('--startup-only', action='store_true', help='Check state/dialogue readiness and both windows immediately after launch')
+parser.add_argument('--appearance-only', action='store_true', help='Private wallpaper gallery, dark theme and reload checks')
 parser.add_argument('--quit-only', choices=['main', 'companion'])
 parser.add_argument('--quiet-exit', action='store_true')
 args = parser.parse_args()
@@ -25,6 +26,11 @@ if os.environ.get('MIKU_PRIVATE_SMOKE') != '1':
 data = root / '.local-test' / f'headless-ru-{time.time_ns()}'
 data.mkdir(parents=True, mode=0o700)
 seed_silent_data(data / 'data/dev.mikufocus.desktop')
+if args.appearance_only:
+    from appearance_smoke import seed
+    seed(data / 'data/dev.mikufocus.desktop')
+    home = data / 'home'; home.mkdir(mode=0o700)
+    os.environ['HOME'] = str(home)
 runtime = data / 'runtime'
 runtime.mkdir(mode=0o700)
 bus_config = data / 'bus.conf'
@@ -101,6 +107,7 @@ with (data / 'desktop.log').open('w') as log:
         if args.panel_only: command.append('--panel-only')
         if args.categories_only: command.append('--categories-only')
         if args.startup_only: command.append('--startup-only')
+        if args.appearance_only: command.append('--appearance-only')
         if args.quit_only: command.extend(['--quit-only', args.quit_only])
         if args.quiet_exit: command.append('--quiet-exit')
         subprocess.run(command, cwd=root, check=True, timeout=300 if not args.quick else 180)
@@ -108,6 +115,12 @@ with (data / 'desktop.log').open('w') as log:
         print(f'isolated {profile} exit code', code, flush=True)
         assert code == 0
         (data / 'exit.json').write_text(json.dumps({'exitCode': code, 'profile': profile}))
+        if args.appearance_only:
+            app = subprocess.Popen([str(root / f'src-tauri/target/{profile}/miku-focus')], stdout=log, stderr=log)
+            time.sleep(2)
+            subprocess.run(['python', str(root / 'scripts/desktop-smoke.py'), '--pid', str(app.pid), '--data', str(data / 'data/dev.mikufocus.desktop'), '--x11', '--appearance-reload'], cwd=root, check=True, timeout=120)
+            assert app.wait(timeout=15) == 0
+            print('appearance reload exit code 0', flush=True)
     finally:
         stop_owned(app)
         stop_owned(registry)

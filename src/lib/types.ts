@@ -4,15 +4,17 @@ export type Emotion = 'Neutral' | 'Happy' | 'Calm' | 'Pleased' | 'Surprised' | '
 export interface Segment { startMs: number; endMs: number }
 export interface Session { id: string; categoryId: string; startedAt: number; endedAt: number | null; segments: Segment[]; extensions: number; completed: boolean }
 export interface Category { id: string; name: string; color: string; archived: boolean; deleted?: boolean }
+export interface Wallpaper { id: string; name: string; path: string; thumbnail: string | null }
 export interface Settings {
   focusMinutes: number; shortBreakMinutes: number; longBreakMinutes: number; sessionsBeforeLong: number;
   autoStart: boolean; volume: number; textSpeed: number; quietMode: boolean; talkativeness: 'Quiet' | 'Balanced' | 'Chatty' | 'Disabled';
   dailyGoalMinutes: number; alwaysOnTop: boolean; companionPosition: [number, number] | null; companionSize: [number, number] | null;
   backgroundMode: 'Companion' | 'Panel';
   background: string | null; sprites: Partial<Record<Emotion, string>>; voices: Record<string, string>;
+  wallpapers: Wallpaper[]; theme: 'Light' | 'Dark';
   sfx: Record<string, string>; sfxBindings: Record<string, string>; sfxVolume: number;
 }
-export type SettingsPatch = Partial<Pick<Settings, 'focusMinutes' | 'shortBreakMinutes' | 'longBreakMinutes' | 'sessionsBeforeLong' | 'autoStart' | 'volume' | 'sfxVolume' | 'textSpeed' | 'quietMode' | 'talkativeness' | 'dailyGoalMinutes' | 'alwaysOnTop' | 'backgroundMode'>>;
+export type SettingsPatch = Partial<Pick<Settings, 'focusMinutes' | 'shortBreakMinutes' | 'longBreakMinutes' | 'sessionsBeforeLong' | 'autoStart' | 'volume' | 'sfxVolume' | 'textSpeed' | 'quietMode' | 'talkativeness' | 'dailyGoalMinutes' | 'alwaysOnTop' | 'backgroundMode' | 'theme'>>;
 export interface Timer {
   status: Status; phase: Phase; remainingMs: number; deadlineMs: number | null;
   segmentStartedAt: number | null; session: Session | null; cycle: number;

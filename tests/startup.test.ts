@@ -12,7 +12,7 @@ test('no WebView can invoke a command before application state is registered', (
   const create = setup.indexOf('tauri::WebviewWindowBuilder::from_config');
   assert.ok(manage >= 0 && create > manage);
   assert.ok(setup.indexOf('state.save(') < create);
-  assert.match(setup.slice(create, create + 200), /\.visible\(false\)[\s\S]*\.build\(\)/);
+  assert.match(setup.slice(create, setup.indexOf('use tauri::menu', create)), /\.visible\(false\)[\s\S]*\.build\(\)/);
   assert.ok(setup.lastIndexOf('switch_window(app.handle(), mode)') > create);
 });
 

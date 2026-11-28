@@ -40,6 +40,7 @@ impl SettingsStore {
         if data.schema_version != 1 {
             return Err("Неподдерживаемая версия хранилища; файл не изменён".into());
         }
+        data.settings.migrate_wallpapers();
         data.settings.validate()?;
         data.settings.migrate_sound_defaults();
         data.localize_builtin_categories();
@@ -90,6 +91,42 @@ mod tests {
         assert_eq!(fs::read(root.join("state.json")).unwrap(), b"not json");
         drop(store);
         // Only the uniquely named directory created by this test is removed.
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn legacy_background_migration_and_theme_persist_without_touching_assets_or_history() {
+        let root =
+            std::env::temp_dir().join(format!("miku-appearance-store-{}", std::process::id()));
+        let store = SettingsStore::new(root.clone()).unwrap();
+        let image = root.join("assets/old.png");
+        fs::write(&image, b"original image bytes").unwrap();
+        let mut db = Database::default();
+        db.action("start", 1000).unwrap();
+        db.action("reset", 2000).unwrap();
+        let mut legacy = serde_json::to_value(&db).unwrap();
+        legacy["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("wallpapers");
+        legacy["settings"].as_object_mut().unwrap().remove("theme");
+        legacy["settings"]["background"] = serde_json::json!(image);
+        fs::write(
+            root.join("state.json"),
+            serde_json::to_vec(&legacy).unwrap(),
+        )
+        .unwrap();
+        let mut loaded = store.load().unwrap();
+        assert_eq!(loaded.settings.wallpapers.len(), 1);
+        assert_eq!(loaded.settings.theme, crate::timer::Theme::Light);
+        assert_eq!(loaded.sessions, db.sessions);
+        loaded.settings.theme = crate::timer::Theme::Dark;
+        store.save(&loaded).unwrap();
+        let restored = store.load().unwrap();
+        assert_eq!(restored.settings.theme, crate::timer::Theme::Dark);
+        assert_eq!(restored.settings.wallpapers, loaded.settings.wallpapers);
+        assert_eq!(fs::read(&image).unwrap(), b"original image bytes");
+        assert!(root.join("state.backup.json").exists());
+        drop(store);
         fs::remove_dir_all(root).unwrap();
     }
 }

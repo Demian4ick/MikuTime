@@ -9,6 +9,7 @@ mod panel_ipc;
 mod platform;
 mod store;
 mod timer;
+mod wallpapers;
 mod window_geometry;
 
 use serde::Serialize;
@@ -19,7 +20,20 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{Emitter, Manager};
-use timer::{BackgroundMode, Category, Database, SettingsPatch};
+use timer::{BackgroundMode, Category, Database, SettingsPatch, Wallpaper};
+
+fn native_theme(theme: timer::Theme) -> tauri::Theme {
+    match theme {
+        timer::Theme::Light => tauri::Theme::Light,
+        timer::Theme::Dark => tauri::Theme::Dark,
+    }
+}
+fn window_background(theme: timer::Theme) -> tauri::window::Color {
+    match theme {
+        timer::Theme::Light => tauri::window::Color(228, 252, 245, 255),
+        timer::Theme::Dark => tauri::window::Color(21, 30, 40, 255),
+    }
+}
 
 #[derive(Clone, Serialize)]
 struct ReactionEvent {
@@ -103,6 +117,19 @@ impl AppState {
         change(&mut runtime.db)?;
         if let Err(error) = self.save(runtime) {
             (runtime.db.categories, runtime.db.selected_category) = previous;
+            return Err(error);
+        }
+        Ok(())
+    }
+    fn change_appearance(
+        &self,
+        runtime: &mut Runtime,
+        change: impl FnOnce(&mut timer::Settings) -> Result<(), String>,
+    ) -> Result<(), String> {
+        let previous = runtime.db.settings.clone();
+        change(&mut runtime.db.settings)?;
+        if let Err(error) = self.save(runtime) {
+            runtime.db.settings = previous;
             return Err(error);
         }
         Ok(())
@@ -215,15 +242,29 @@ fn update_settings(
     patch: SettingsPatch,
 ) -> Result<(), String> {
     let mut r = state.runtime.lock().unwrap();
+    let previous_settings = r.db.settings.clone();
+    let previous_remaining = r.db.timer.remaining_ms;
     let previous_top = r.db.settings.always_on_top;
     let previous_mode = r.db.settings.background_mode;
+    let previous_theme = r.db.settings.theme;
     r.db.update_settings(patch)?;
     let top_changed = previous_top != r.db.settings.always_on_top;
     let active = r.active_window.clone();
     let top = r.db.settings.always_on_top;
     let mode_changed = previous_mode != r.db.settings.background_mode;
-    state.save(&mut r)?;
+    let theme = r.db.settings.theme;
+    if let Err(error) = state.save(&mut r) {
+        r.db.settings = previous_settings;
+        r.db.timer.remaining_ms = previous_remaining;
+        return Err(error);
+    }
     drop(r);
+    if previous_theme != theme {
+        app.set_theme(Some(native_theme(theme)));
+        if let Some(main) = app.get_webview_window("main") {
+            let _ = main.set_background_color(Some(window_background(theme)));
+        }
+    }
     if mode_changed && active != "main" {
         switch_window(&app, "background")?;
     }
@@ -298,6 +339,88 @@ fn delete_category(
 }
 
 #[tauri::command]
+fn import_wallpaper(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<(), String> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err("Нужны данные изображения".into());
+    };
+    let image = wallpapers::parse(bytes)?;
+    let mut r = state.runtime.lock().unwrap();
+    if r.db.settings.wallpapers.len() >= 100 {
+        return Err("В галерее может быть не больше 100 обоев".into());
+    }
+    static SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let assets = state.store.root.join("assets");
+    let (id, path, preview) = loop {
+        let id = format!(
+            "wallpaper-{}-{}",
+            state.now(),
+            SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
+        if r.db.settings.wallpapers.iter().any(|item| item.id == id) {
+            continue;
+        }
+        let mut occupied = false;
+        for suffix in [".png", ".jpg", ".tmp", "-preview.jpg", "-preview.tmp"] {
+            match std::fs::symlink_metadata(assets.join(format!("{id}{suffix}"))) {
+                Ok(_) => {
+                    occupied = true;
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+        if !occupied {
+            break (
+                id.clone(),
+                assets.join(format!("{id}.{}", image.extension)),
+                assets.join(format!("{id}-preview.jpg")),
+            );
+        }
+    };
+    store::atomic_write(&path, image.image)?;
+    store::atomic_write(&preview, image.preview)?;
+    state.change_appearance(&mut r, |settings| {
+        settings.add_wallpaper(Wallpaper {
+            id,
+            name: image.name,
+            path: path.to_string_lossy().into_owned(),
+            thumbnail: Some(preview.to_string_lossy().into_owned()),
+        })
+    })?;
+    drop(r);
+    publish(&app);
+    Ok(())
+}
+#[tauri::command]
+fn select_wallpaper(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    id: Option<String>,
+) -> Result<(), String> {
+    let mut r = state.runtime.lock().unwrap();
+    state.change_appearance(&mut r, |settings| settings.select_wallpaper(id.as_deref()))?;
+    drop(r);
+    publish(&app);
+    Ok(())
+}
+#[tauri::command]
+fn remove_wallpaper(
+    app: tauri::AppHandle,
+    state: tauri::State<AppState>,
+    id: String,
+) -> Result<(), String> {
+    let mut r = state.runtime.lock().unwrap();
+    state.change_appearance(&mut r, |settings| settings.remove_wallpaper(&id))?;
+    drop(r);
+    publish(&app);
+    Ok(())
+}
+#[tauri::command]
 fn import_asset(
     app: tauri::AppHandle,
     state: tauri::State<AppState>,
@@ -371,6 +494,9 @@ fn import_asset(
     };
     // Keep the capacity check and insert under one lock, including concurrent WebView imports.
     let mut r = state.runtime.lock().unwrap();
+    if kind == "background" && r.db.settings.wallpapers.len() >= 100 {
+        return Err("В галерее может быть не больше 100 обоев".into());
+    }
     if kind == "voice" || kind == "sfx" {
         let sounds = if kind == "voice" {
             &r.db.settings.voices
@@ -393,8 +519,14 @@ fn import_asset(
     let path = state.store.root.join("assets").join(name);
     store::atomic_write(&path, &bytes)?;
     let path = path.to_string_lossy().into_owned();
+    let previous = r.db.settings.clone();
     match kind.as_str() {
-        "background" => r.db.settings.background = Some(path.clone()),
+        "background" => r.db.settings.add_wallpaper(Wallpaper {
+            id: format!("legacy-{}-{sequence}", state.now()),
+            name: "Свой фон".into(),
+            path: path.clone(),
+            thumbnail: None,
+        })?,
         "sprite" => {
             r.db.settings.sprites.insert(id, path.clone());
         }
@@ -405,7 +537,10 @@ fn import_asset(
             r.db.settings.voices.insert(id, path.clone());
         }
     }
-    state.save(&mut r)?;
+    if let Err(error) = state.save(&mut r) {
+        r.db.settings = previous;
+        return Err(error);
+    }
     drop(r);
     publish(&app);
     Ok(path)
@@ -413,9 +548,11 @@ fn import_asset(
 #[tauri::command]
 fn reset_art(app: tauri::AppHandle, state: tauri::State<AppState>) -> Result<(), String> {
     let mut r = state.runtime.lock().unwrap();
-    r.db.settings.background = None;
-    r.db.settings.sprites.clear();
-    state.save(&mut r)?;
+    state.change_appearance(&mut r, |settings| {
+        settings.background = None;
+        settings.sprites.clear();
+        Ok(())
+    })?;
     drop(r);
     publish(&app);
     Ok(())
@@ -964,8 +1101,15 @@ pub fn run() {
 
             // WebView2 can invoke commands while a window is being built. Both windows
             // must be created only after AppState exists, never by Tauri before setup.
-            for config in app.config().app.windows.clone() {
+            let theme = state.runtime.lock().unwrap().db.settings.theme;
+            app.set_theme(Some(native_theme(theme)));
+            let theme_name = if theme == timer::Theme::Dark { "dark" } else { "light" };
+            let theme_script = format!("(() => {{ const apply = () => {{ document.documentElement.dataset.theme = '{theme_name}'; }}; if (document.documentElement) apply(); else document.addEventListener('DOMContentLoaded', apply, {{ once: true }}); }})()");
+            for mut config in app.config().app.windows.clone() {
+                config.theme = Some(native_theme(theme));
+                if config.label == "main" { config.background_color = Some(window_background(theme)); }
                 tauri::WebviewWindowBuilder::from_config(app.handle(), &config)?
+                    .initialization_script(&theme_script)
                     .visible(false)
                     .build()?;
             }
@@ -1021,7 +1165,7 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![get_state, timer_action, claim_reaction, request_reaction,
-            update_settings, set_focus_minutes, adjust_focus_minutes, select_category, save_category, delete_category, import_asset, reset_art, bind_sfx, clear_sound, use_builtin_audio, get_dialogues, save_dialogues,
+            update_settings, set_focus_minutes, adjust_focus_minutes, select_category, save_category, delete_category, import_asset, import_wallpaper, select_wallpaper, remove_wallpaper, reset_art, bind_sfx, clear_sound, use_builtin_audio, get_dialogues, save_dialogues,
             export_data, choose_obsidian_folder, disconnect_obsidian, refresh_obsidian, window_action, complete_quit, cancel_quit, drag_companion, resize_companion, adjust_companion_size, save_companion_geometry])
         .run(tauri::generate_context!())
         .expect("Miku Focus startup failed; user data has not been discarded");
