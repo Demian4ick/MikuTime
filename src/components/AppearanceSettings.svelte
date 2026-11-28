@@ -3,6 +3,7 @@
   import { convertFileSrc } from '@tauri-apps/api/core';
   import type { Settings, SettingsPatch } from '../lib/types';
   import { wallpaperLimit } from '../lib/appearance';
+  import { builtinWallpapers } from '../lib/wallpapers';
   let { settings, save, upload, select, remove, choiceSound }: {
     settings: Settings; save: (patch: SettingsPatch) => Promise<void>;
     upload: (files: File[]) => Promise<void>; select: (id: string | null) => Promise<void>;
@@ -55,6 +56,14 @@
         <img src="/background.jpg" alt="" loading="lazy" decoding="async"/><span>Стандартные</span>{#if settings.background === null}<small>Выбрано</small>{/if}
       </button>
     </div>
+    {#each builtinWallpapers as wallpaper (wallpaper.id)}
+      <div class="wallpaper-card" class:selected={settings.background === wallpaper.path}>
+        <button class="wallpaper-choice" disabled={busy} aria-label={`Выбрать обои ${wallpaper.name}`} aria-pressed={settings.background === wallpaper.path} onclick={() => { choiceSound(); void run(() => select(wallpaper.id)); }}>
+          <img src={wallpaper.thumbnail ?? wallpaper.path} alt="" loading="lazy" decoding="async"/>
+          <span>{wallpaper.name}</span><small>{settings.background === wallpaper.path ? 'Выбрано' : 'Встроенные'}</small>
+        </button>
+      </div>
+    {/each}
     {#each settings.wallpapers as wallpaper (wallpaper.id)}
       <div class="wallpaper-card" class:selected={settings.background === wallpaper.path}>
         <button class="wallpaper-choice" disabled={busy} aria-label={`Выбрать обои ${wallpaper.name}`} aria-pressed={settings.background === wallpaper.path} onclick={() => { choiceSound(); void run(() => select(wallpaper.id)); }}>

@@ -24,6 +24,8 @@ def run(args, app, *, click, find, keys, state, persisted, check, all_text, scre
     def appearance():
         click('Настройки'); click('Оформление')
 
+    builtins = json.loads((Path(__file__).resolve().parent.parent / 'src/lib/wallpaper-catalog.json').read_text())
+
     def dark_frame(name):
         screenshot(name)
         image = Image.open(args.data.parent / name).convert('RGB')
@@ -33,7 +35,7 @@ def run(args, app, *, click, find, keys, state, persisted, check, all_text, scre
     if args.appearance_reload:
         check('dark theme is retained after a real process restart', state()['settings']['theme'] == 'Dark')
         appearance()
-        check('gallery selection survives a real process restart', state()['settings']['background'] == state()['settings']['wallpapers'][0]['path'] and len(state()['settings']['wallpapers']) == 1)
+        check('bundled selection survives a real process restart without a personal duplicate', state()['settings']['background'] == builtins[-1]['path'] and len(state()['settings']['wallpapers']) == 1)
         dark_frame('dark-reload.png')
         click('Светлая'); assert persisted(lambda s: s['settings']['theme'] == 'Light')
         screenshot('light-reload.png')
@@ -44,6 +46,17 @@ def run(args, app, *, click, find, keys, state, persisted, check, all_text, scre
     before = state()
     appearance()
     check('legacy background is migrated once without changing the selected file', len(state()['settings']['wallpapers']) == 1 and state()['settings']['background'] == before['settings']['background'])
+    assets_before = sorted(path.name for path in (args.data / 'assets').iterdir())
+    for item in builtins:
+        check('bundled wallpaper is available without import: ' + item['name'], find(app, lambda o: o.get_name() == 'Выбрать обои ' + item['name']) is not None)
+        click('Выбрать обои ' + item['name'])
+        check('bundled wallpaper is selectable: ' + item['name'], persisted(lambda s: s['settings']['background'] == item['path']))
+        check('bundled wallpaper cannot be removed: ' + item['name'], find(app, lambda o: o.get_name() == 'Убрать обои ' + item['name']) is None)
+    check('bundled choices do not copy files into app-data or fill personal gallery', len(state()['settings']['wallpapers']) == 1 and sorted(path.name for path in (args.data / 'assets').iterdir()) == assets_before)
+    click('♡ Комната фокуса'); screenshot('builtin-night-stars-focus.png')
+    appearance()
+    click('Выбрать обои Свой фон')
+    assert persisted(lambda s: s['settings']['background'] == before['settings']['background'])
     click('Тёмная'); assert persisted(lambda s: s['settings']['theme'] == 'Dark')
     dark_frame('dark-appearance.png')
     click('♡ Комната фокуса'); dark_frame('dark-focus.png')
@@ -149,8 +162,8 @@ def run(args, app, *, click, find, keys, state, persisted, check, all_text, scre
     check('removing gallery entries never deletes retained copies', all(Path(item['path']).exists() and Path(item['thumbnail']).exists() for item in items))
     check('source image files are never changed', all(hashlib.sha256((folder / name).read_bytes()).hexdigest() == digest for name, digest in originals.items()))
 
-    click('Выбрать обои Свой фон')
-    assert persisted(lambda s: s['settings']['background'] == s['settings']['wallpapers'][0]['path'])
+    click('Выбрать обои ' + builtins[-1]['name'])
+    assert persisted(lambda s: s['settings']['background'] == builtins[-1]['path'])
     invalid = folder / 'corrupt.png'
     invalid.write_bytes((folder / 'Лес.png').read_bytes()[:33])
     click('Добавить обои')

@@ -39,8 +39,8 @@ node scripts/release.mjs check
 
 ```sh
 # Укажите новый, ещё не опубликованный тег.
-git tag v0.1.13-beta.5
-git push origin v0.1.13-beta.5
+git tag v0.1.13-beta.6
+git push origin v0.1.13-beta.6
 ```
 
 Не передвигайте опубликованные теги и не заменяйте их файлы.
@@ -53,7 +53,7 @@ git push origin v0.1.13-beta.5
 4. Просмотрите описание черновика и опубликуйте бету:
 
    ```sh
-   gh release edit v0.1.13-beta.5 --draft=false --prerelease --latest=false
+   gh release edit v0.1.13-beta.6 --draft=false --prerelease --latest=false
    ```
 
 Для беты используйте ссылку на конкретный тег, а не `/releases/latest`.

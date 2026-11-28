@@ -4,6 +4,18 @@ use serde::Deserialize;
 pub const MAX_IMAGE: usize = 20 * 1024 * 1024;
 pub const MAX_PREVIEW: usize = 256 * 1024;
 
+pub fn builtins() -> &'static [crate::timer::Wallpaper] {
+    static CATALOG: std::sync::OnceLock<Vec<crate::timer::Wallpaper>> = std::sync::OnceLock::new();
+    CATALOG.get_or_init(|| {
+        serde_json::from_str(include_str!("../../src/lib/wallpaper-catalog.json"))
+            .expect("invalid bundled wallpaper catalogue")
+    })
+}
+
+pub fn is_builtin_path(path: &str) -> bool {
+    builtins().iter().any(|item| item.path == path)
+}
+
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Metadata {
@@ -239,5 +251,53 @@ mod tests {
         assert!(settings.add_wallpaper(wallpaper("extra")).is_err());
         settings.remove_wallpaper("one").unwrap();
         settings.add_wallpaper(wallpaper("extra")).unwrap();
+    }
+
+    #[test]
+    fn builtins_are_available_to_fresh_and_existing_profiles_without_import_or_migration() {
+        assert_eq!(builtins().len(), 9);
+        let mut settings = Settings::default();
+        for builtin in builtins() {
+            assert!(crate::audio::valid_id(&builtin.id));
+            assert!(builtin.path.starts_with("/wallpapers/"));
+            assert!(builtin
+                .thumbnail
+                .as_ref()
+                .unwrap()
+                .starts_with("/wallpapers/previews/"));
+            settings.select_wallpaper(Some(&builtin.id)).unwrap();
+            assert_eq!(settings.background.as_ref(), Some(&builtin.path));
+            let mut restored: Settings =
+                serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+            restored.migrate_wallpapers();
+            restored.validate().unwrap();
+            assert_eq!(restored.background.as_ref(), Some(&builtin.path));
+            assert!(restored.wallpapers.is_empty());
+            assert!(settings.remove_wallpaper(&builtin.id).is_err());
+            assert!(settings.add_wallpaper(builtin.clone()).is_err());
+        }
+        settings.add_wallpaper(wallpaper("personal")).unwrap();
+        settings.select_wallpaper(Some(&builtins()[0].id)).unwrap();
+        settings.remove_wallpaper("personal").unwrap();
+        assert_eq!(settings.background.as_ref(), Some(&builtins()[0].path));
+        let before = serde_json::to_value(&settings).unwrap();
+        for id in [
+            "builtin-unknown",
+            "/wallpapers/night-stars.jpg",
+            "../wallpapers/night-stars.jpg",
+        ] {
+            assert!(settings.select_wallpaper(Some(id)).is_err());
+            assert_eq!(serde_json::to_value(&settings).unwrap(), before);
+        }
+        for index in 0..100 {
+            settings
+                .add_wallpaper(wallpaper(&format!("personal-{index}")))
+                .unwrap();
+        }
+        settings.select_wallpaper(Some(&builtins()[0].id)).unwrap();
+        assert_eq!(settings.wallpapers.len(), 100);
+        assert_eq!(settings.background.as_ref(), Some(&builtins()[0].path));
+        settings.select_wallpaper(None).unwrap();
+        assert!(settings.background.is_none());
     }
 }

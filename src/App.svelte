@@ -7,6 +7,7 @@
   import { AutoSaver, type SaveStatus } from './lib/autosave';
   import { CategoryWrites } from './lib/category-writes';
   import { AppearanceWrites, applyTheme, prepareWallpaper, wallpaperLimit } from './lib/appearance';
+  import { backgroundSource } from './lib/wallpapers';
   import { EmotionManager } from './lib/emotions';
   import { emotionNames } from './lib/localization';
   import { ReactionController } from './lib/reactions';
@@ -31,7 +32,7 @@
   let visual = $state<VisualState>({ emotion: 'Neutral', ru: 'Я рядом. Всё получится~ ♡', en: "I'm here with you.", speaking: false, typing: false, awaitingInput: false });
   let previousSprite = $state(''); let transition = $state(false);
   let sprite = $derived(companion ? '/companion/SmartyMiku.png' : snapshot ? EmotionManager.path(visual.emotion, snapshot.settings, convertFileSrc) : '/sprites/Neutral.png');
-  let background = $derived(snapshot?.settings.background ? convertFileSrc(snapshot.settings.background) : '/background.jpg');
+  let background = $derived(backgroundSource(snapshot?.settings.background, convertFileSrc));
   let isActive = $derived(snapshot?.activeWindow === label);
   let controller: ReactionController | null = null;
   let dialogueData: DialogueFile | null = null;

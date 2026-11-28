@@ -1,0 +1,74 @@
+[
+  {
+    "id": "builtin-aqua-tribal",
+    "name": "Аквамариновый узор",
+    "path": "/wallpapers/aqua-tribal.jpg",
+    "thumbnail": "/wallpapers/previews/aqua-tribal.jpg",
+    "sourceFile": "Cybersigilism tribal Recolor aqua.jpg",
+    "sha256": "6144d67e6347d9da17063b08dbb477afc850259fed042fb3f1ed232dd70e93d2"
+  },
+  {
+    "id": "builtin-aqua-aero",
+    "name": "Бирюзовый аэро",
+    "path": "/wallpapers/aqua-aero.jpg",
+    "thumbnail": "/wallpapers/previews/aqua-aero.jpg",
+    "sourceFile": "₊ 🫧⁺ ⋆ blue frutiger aero aesthetic horizontal widget #frutigeraero #widget #aesthetic not my pic_.jpg",
+    "sha256": "90939cc610bd7f294ebbf3fc8ed926efe360c423d19df45a6420840d5746ee89"
+  },
+  {
+    "id": "builtin-teal-checker",
+    "name": "Мятная клетка",
+    "path": "/wallpapers/teal-checker.jpg",
+    "thumbnail": "/wallpapers/previews/teal-checker.jpg",
+    "sourceFile": "teal checkered bg!.jpg",
+    "sha256": "27d26c2b6b81d061f5c9fe420c470c5cdc051d1f3f7d9bc00a31f5bc9743008c"
+  },
+  {
+    "id": "builtin-mint-dots",
+    "name": "Мятные точки",
+    "path": "/wallpapers/mint-dots.jpg",
+    "thumbnail": "/wallpapers/previews/mint-dots.jpg",
+    "sourceFile": "༯ _ #vamosgavi .jpg",
+    "sha256": "c7ee9f393aaa9d82d53b275fe9b54ef38c7529a1b206ac62144d558d47d10cdd"
+  },
+  {
+    "id": "builtin-mint-stars",
+    "name": "Светлые звёзды",
+    "path": "/wallpapers/mint-stars.jpg",
+    "thumbnail": "/wallpapers/previews/mint-stars.jpg",
+    "sourceFile": "jpg",
+    "sha256": "4db557dd572eba0d58976d86a148a2fe4ad6a2b7715ef66b3acb4b183d1d97da"
+  },
+  {
+    "id": "builtin-aqua-stars",
+    "name": "Бирюзовые звёзды",
+    "path": "/wallpapers/aqua-stars.jpg",
+    "thumbnail": "/wallpapers/previews/aqua-stars.jpg",
+    "sourceFile": "d.jpg",
+    "sha256": "8aef4618adaaaaa7981540f9fe4d1d88196fcaf25ae7c26a4a8116c525658eb4"
+  },
+  {
+    "id": "builtin-teal-stars",
+    "name": "Звёздный узор",
+    "path": "/wallpapers/teal-stars.jpg",
+    "thumbnail": "/wallpapers/previews/teal-stars.jpg",
+    "sourceFile": "Credits_ Flor_Hiroshi.jpg",
+    "sha256": "305ef2a15bab2fc952fa49e4c0a2684de73f34a59c370f1c84fe5090d9023a2c"
+  },
+  {
+    "id": "builtin-teal-hearts",
+    "name": "Бирюзовые сердца",
+    "path": "/wallpapers/teal-hearts.jpg",
+    "thumbnail": "/wallpapers/previews/teal-hearts.jpg",
+    "sourceFile": "jpg(1)",
+    "sha256": "42ecbda90f7f820c080361deedbc6433f598f020bf91d9ba36d19d693380ea90"
+  },
+  {
+    "id": "builtin-night-stars",
+    "name": "Ночные звёзды",
+    "path": "/wallpapers/night-stars.jpg",
+    "thumbnail": "/wallpapers/previews/night-stars.jpg",
+    "sourceFile": "Twinkle Twinkle Little Stars.jpg",
+    "sha256": "13b49d1cf7ddcaf714076780800357b40ec59181fd1afae6773f6ca80625f0cc"
+  }
+]

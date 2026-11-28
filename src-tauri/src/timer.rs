@@ -101,7 +101,9 @@ impl Default for Settings {
 impl Settings {
     pub fn migrate_wallpapers(&mut self) {
         if let Some(path) = self.background.clone() {
-            if !self.wallpapers.iter().any(|item| item.path == path) {
+            if !crate::wallpapers::is_builtin_path(&path)
+                && !self.wallpapers.iter().any(|item| item.path == path)
+            {
                 self.wallpapers.push(Wallpaper {
                     id: "legacy-background".into(),
                     name: "Свой фон".into(),
@@ -123,8 +125,9 @@ impl Settings {
         self.background = match id {
             None => None,
             Some(id) => Some(
-                self.wallpapers
+                crate::wallpapers::builtins()
                     .iter()
+                    .chain(self.wallpapers.iter())
                     .find(|item| item.id == id)
                     .ok_or("Обои не найдены в галерее")?
                     .path
@@ -167,6 +170,9 @@ impl Settings {
         if self.wallpapers.len() > 100
             || self.wallpapers.iter().any(|item| {
                 !crate::audio::valid_id(&item.id)
+                    || crate::wallpapers::builtins()
+                        .iter()
+                        .any(|builtin| builtin.id == item.id)
                     || !wallpaper_ids.insert(&item.id)
                     || item.name.trim().is_empty()
                     || item.name.chars().count() > 80

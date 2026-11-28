@@ -322,6 +322,14 @@ if args.appearance_only or args.appearance_reload:
 
 if args.startup_only:
     check('startup loads dialogues and state without a reload', 'С возвращением, сэмпай' in all_text(app) and 'state not managed' not in all_text(app) and 'Не удалось запустить' not in all_text(app))
+    click('Настройки'); click('Оформление')
+    builtin_wallpapers = json.loads((Path(__file__).resolve().parent.parent / 'src/lib/wallpaper-catalog.json').read_text())
+    check('fresh profile keeps the standard background and has all nine bundled choices', state()['settings']['background'] is None and state()['settings']['wallpapers'] == [] and len(builtin_wallpapers) == 9 and all(find(app, lambda o: o.get_name() == 'Выбрать обои ' + item['name']) is not None for item in builtin_wallpapers))
+    click('Выбрать обои ' + builtin_wallpapers[0]['name'])
+    check('fresh profile selects bundled wallpaper without an import', persisted(lambda s: s['settings']['background'] == builtin_wallpapers[0]['path'] and s['settings']['wallpapers'] == []))
+    screenshot('builtin-fresh-gallery.png')
+    click('Выбрать стандартные обои')
+    check('standard wallpaper remains selectable with the bundled set', persisted(lambda s: s['settings']['background'] is None))
     click('Настройки'); click('Звуки'); click('Голоса (21)')
     check('dialogue catalogue is available immediately after startup', find(app, lambda o: o.get_name() == 'Голоса персонажа') is not None or 'Голоса и реплики' in all_text(app))
     click('Помощник ↗')
