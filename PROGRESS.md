@@ -2,7 +2,7 @@
 
 Miku Focus — бета для Windows 10/11 x64 и Arch Linux x86_64.
 
-Готовые установщики: [beta.5](https://github.com/Demian4ick/MikuTime/releases/tag/v0.1.13-beta.5).
+Готовые установщики: [beta.6](https://github.com/Demian4ick/MikuTime/releases/tag/v0.1.13-beta.6).
 
 ## Возможности
 
